@@ -42,6 +42,13 @@ class GameView(arcade.View):
         self.inventory_slot_spacing = 10
         self.inventory_width = 5
         self.inventory_height = 4
+        
+        self.quick_slots_count = 6
+        self.quick_slots = [None] * (self.quick_slots_count - 1)
+        self.slot_size = 50
+        self.slot_spacing = 10
+
+        self.balance = 100
 
         try:
             self.map_image = arcade.load_texture("media/карта.png")
@@ -68,14 +75,14 @@ class GameView(arcade.View):
         self.player_position_x = 0
         self.player_position_y = 0
 
-        self.slots_count = 6
-        self.slot_size = 50
-        self.slot_spacing = 10
-
         self.tile_sprites = arcade.SpriteList()
 
         self.generate_sprites()
         self.create_fortress()
+        
+        self.last_click_time = 0
+        self.double_click_delay = 0.3
+        self.last_clicked_slot = None
 
     def create_fortress(self):
         if self.fortress_loaded:
@@ -135,17 +142,17 @@ class GameView(arcade.View):
         screen_width = self.window.width
         screen_height = self.window.height
 
-        total_width = self.slots_count * self.slot_size + (self.slots_count - 1) * self.slot_spacing
+        total_width = self.quick_slots_count * self.slot_size + (self.quick_slots_count - 1) * self.slot_spacing
         first_x = (screen_width - total_width) // 2
 
         slots = []
-        for i in range(self.slots_count):
+        for i in range(self.quick_slots_count):
             slot_x = first_x + i * (self.slot_size + self.slot_spacing)
             slot_left = slot_x
             slot_right = slot_x + self.slot_size
             slot_bottom = 20
             slot_top = 20 + self.slot_size
-            slots.append((slot_left, slot_right, slot_bottom, slot_top))
+            slots.append((slot_left, slot_right, slot_bottom, slot_top, i))
 
         return slots
     
@@ -254,6 +261,15 @@ class GameView(arcade.View):
             bold=True
         )
         
+        balance_text = f"Баланс: {self.balance}"
+        balance_x = inv_left + 20
+        balance_y = inv_top - 25
+        arcade.draw_text(
+            balance_text, balance_x, balance_y,
+            arcade.color.DARK_GREEN, font_size=18,
+            anchor_x="left", anchor_y="center"
+        )
+        
         slots, slot_width, slot_height = self.get_inventory_slots()
         
         for slot_left, slot_right, slot_bottom, slot_top, slot_index in slots:
@@ -261,14 +277,49 @@ class GameView(arcade.View):
                 slot_left, slot_right, slot_bottom, slot_top,
                 arcade.color.LIGHT_GRAY
             )
+            arcade.draw_lrbt_rectangle_outline(
+                slot_left, slot_right, slot_bottom, slot_top,
+                arcade.color.DARK_GRAY, 2
+            )
             
             slot_center_x = (slot_left + slot_right) // 2
             slot_center_y = (slot_bottom + slot_top) // 2
-            arcade.draw_text(
-                str(slot_index + 1), slot_center_x, slot_center_y,
-                arcade.color.DARK_GRAY, font_size=12,
-                anchor_x="center", anchor_y="center"
-            )
+            
+            if slot_index < len(self.inventory_items):
+                item = self.inventory_items[slot_index]
+                
+                if item['name'].startswith('Камни'):
+                    color = (169, 169, 169)
+                elif item['name'].startswith('Банан'):
+                    color = arcade.color.YELLOW
+                elif item['name'].startswith('Костер'):
+                    color = arcade.color.ORANGE_RED
+                else:
+                    color = arcade.color.BLUE
+                
+                item_width = slot_width * 0.8
+                item_height = slot_height * 0.8
+                item_left = slot_left + (slot_width - item_width) / 2
+                item_bottom = slot_bottom + (slot_height - item_height) / 2
+                
+                arcade.draw_lrbt_rectangle_filled(
+                    item_left, item_left + item_width,
+                    item_bottom, item_bottom + item_height,
+                    color
+                )
+                
+                name_y = slot_bottom - 15
+                arcade.draw_text(
+                    item['name'], slot_center_x, name_y,
+                    arcade.color.BLACK, font_size=10,
+                    anchor_x="center", anchor_y="top"
+                )
+            else:
+                arcade.draw_text(
+                    str(slot_index + 1), slot_center_x, slot_center_y,
+                    arcade.color.DARK_GRAY, font_size=12,
+                    anchor_x="center", anchor_y="center"
+                )
         
         close_button_size = 30
         close_button_left = inv_right - close_button_size - 10
@@ -278,7 +329,7 @@ class GameView(arcade.View):
         
         arcade.draw_lrbt_rectangle_filled(
             close_button_left, close_button_right, close_button_bottom, close_button_top,
-            arcade.color.GRAY
+            arcade.color.RED
         )
         arcade.draw_text(
             "X", (close_button_left + close_button_right) // 2, 
@@ -289,6 +340,29 @@ class GameView(arcade.View):
         
         self.close_button_area = (close_button_left, close_button_right, 
                                  close_button_bottom, close_button_top)
+
+    def add_item_to_inventory(self, item):
+        if len(self.inventory_items) < self.inventory_slots_count:
+            self.inventory_items.append(item)
+            return True
+        return False
+    
+    def add_item_to_quick_slot(self, item, slot_index):
+        if 0 <= slot_index < len(self.quick_slots) - 1:
+            self.quick_slots[slot_index] = item
+            return True
+        return False
+    
+    def remove_item_from_inventory(self, slot_index):
+        if 0 <= slot_index < len(self.inventory_items):
+            return self.inventory_items.pop(slot_index)
+        return None
+
+    def update_balance(self, amount):
+        if self.balance + amount >= 0:
+            self.balance += amount
+            return True
+        return False
 
     def on_draw(self):
         self.clear()
@@ -323,20 +397,50 @@ class GameView(arcade.View):
                            anchor_y="center", bold=True)
 
         slots = self.get_slots_area()
-        for i, (slot_left, slot_right, slot_bottom, slot_top) in enumerate(slots):
+        for slot_left, slot_right, slot_bottom, slot_top, slot_index in slots:
             arcade.draw_lrbt_rectangle_outline(slot_left, slot_right, slot_bottom, 
                                              slot_top, arcade.color.WHITE, 2)
-
-            if i == self.slots_count - 1:
+            
+            if slot_index == self.quick_slots_count - 1:
                 arcade.draw_text("+", (slot_left + slot_right) / 2, 
                                (slot_bottom + slot_top) / 2,
                                arcade.color.WHITE, font_size=24, 
                                anchor_x="center", anchor_y="center", bold=True)
+            else:
+                if self.quick_slots[slot_index] is not None:
+                    item = self.quick_slots[slot_index]
+                    if item['name'].startswith('Камни'):
+                        color = (169, 169, 169)
+                    elif item['name'].startswith('Банан'):
+                        color = arcade.color.YELLOW
+                    elif item['name'].startswith('Костер'):
+                        color = arcade.color.ORANGE_RED
+                    else:
+                        color = arcade.color.BLUE
+                    
+                    arcade.draw_lrbt_rectangle_filled(
+                        slot_left + 5, slot_right - 5,
+                        slot_bottom + 5, slot_top - 5,
+                        color
+                    )
+                    
+                    arcade.draw_text(
+                        str(slot_index + 1), 
+                        (slot_left + slot_right) / 2, slot_top + 10,
+                        arcade.color.WHITE, font_size=10,
+                        anchor_x="center", anchor_y="center"
+                    )
+                else:
+                    arcade.draw_text(
+                        str(slot_index + 1), 
+                        (slot_left + slot_right) / 2, (slot_bottom + slot_top) / 2,
+                        arcade.color.WHITE, font_size=16,
+                        anchor_x="center", anchor_y="center"
+                    )
         
         if self.show_inventory:
             arcade.draw_lrbt_rectangle_filled(0, screen_width, 0, screen_height,
                                             (0, 0, 0, 180))
-            
             self.draw_inventory()
 
     def on_update(self, delta_time):
@@ -371,6 +475,9 @@ class GameView(arcade.View):
             position,
             1,
         )
+        
+        if self.last_click_time > 0:
+            self.last_click_time -= delta_time
     
     def on_key_press(self, key, modifiers):
         if key == arcade.key.ESCAPE:
@@ -390,6 +497,21 @@ class GameView(arcade.View):
             self.move_left = True
         elif key == arcade.key.RIGHT or key == arcade.key.D:
             self.move_right = True
+        elif key == arcade.key.KEY_1:
+            self.use_quick_slot_item(0)
+        elif key == arcade.key.KEY_2:
+            self.use_quick_slot_item(1)
+        elif key == arcade.key.KEY_3:
+            self.use_quick_slot_item(2)
+        elif key == arcade.key.KEY_4:
+            self.use_quick_slot_item(3)
+        elif key == arcade.key.KEY_5:
+            self.use_quick_slot_item(4)
+
+    def use_quick_slot_item(self, slot_index):
+        if 0 <= slot_index < len(self.quick_slots) and self.quick_slots[slot_index] is not None:
+            item = self.quick_slots[slot_index]
+            print(f"Используется предмет из быстрого слота {slot_index + 1}: {item['name']}")
 
     def on_key_release(self, key, modifiers):
         if key in (arcade.key.W, arcade.key.UP):
@@ -402,6 +524,8 @@ class GameView(arcade.View):
             self.move_right = False
 
     def on_mouse_press(self, x, y, button, modifiers):
+        import time
+        
         if self.show_inventory:
             if hasattr(self, 'close_button_area'):
                 close_left, close_right, close_bottom, close_top = self.close_button_area
@@ -412,20 +536,50 @@ class GameView(arcade.View):
             slots, _, _ = self.get_inventory_slots()
             for slot_left, slot_right, slot_bottom, slot_top, slot_index in slots:
                 if slot_left <= x <= slot_right and slot_bottom <= y <= slot_top:
+                    current_time = time.time()
+                    
+                    if (self.last_clicked_slot == slot_index and 
+                        current_time - self.last_click_time < self.double_click_delay):
+                        
+                        if slot_index < len(self.inventory_items):
+                            item = self.inventory_items[slot_index]
+                            self.move_item_to_quick_slot(item, slot_index)
+                    
+                    self.last_click_time = current_time
+                    self.last_clicked_slot = slot_index
                     return
             
             inv_left, inv_right, inv_bottom, inv_top = self.get_inventory_area()
             if inv_left <= x <= inv_right and inv_bottom <= y <= inv_top:
                 return
+        else:
+            slots = self.get_slots_area()
+            for slot_left, slot_right, slot_bottom, slot_top, slot_index in slots:
+                if slot_left <= x <= slot_right and slot_bottom <= y <= slot_top:
+                    if slot_index == self.quick_slots_count - 1:
+                        self.show_inventory = True
+                    else:
+                        if self.quick_slots[slot_index] is not None:
+                            item = self.quick_slots[slot_index]
+                            print(f"Клик по быстрому слоту {slot_index + 1}: {item['name']}")
+                    return
         
         left, right, bottom, top = self.get_shop_button_area()
         if left <= x <= right and bottom <= y <= top:
-            self.window.show_view(ShopView(self))
+            shop_view = ShopView(self)
+            self.window.show_view(shop_view)
             return
 
-        slots = self.get_slots_area()
-        for i, (slot_left, slot_right, slot_bottom, slot_top) in enumerate(slots):
-            if slot_left <= x <= slot_right and slot_bottom <= y <= slot_top:
-                if i == self.slots_count - 1:
-                    self.show_inventory = True
-                return
+    def move_item_to_quick_slot(self, item, inventory_slot_index):
+        for i in range(len(self.quick_slots) - 1):
+            if self.quick_slots[i] is None:
+                self.quick_slots[i] = {
+                    'name': item['name'],
+                    'production': item['production'],
+                    'price': item['price']
+                }
+                print(f"Предмет '{item['name']}' перемещен в быстрый слот {i + 1}")
+                return True
+        
+        print("Нет свободных быстрых слотов!")
+        return False

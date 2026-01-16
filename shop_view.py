@@ -4,7 +4,7 @@ class ShopView(arcade.View):
     def __init__(self, game_view):
         super().__init__()
         self.game_view = game_view
-        self.balance = 0
+        self.balance = game_view.balance
         self.scroll_position = 0
         self.scroll_speed = 50
         
@@ -62,6 +62,7 @@ class ShopView(arcade.View):
     def on_show_view(self):
         arcade.set_background_color(arcade.color.SKY_BLUE)
         self.scroll_position = 0
+        self.balance = self.game_view.balance
     
     def on_resize(self, width, height):
         max_scroll = self.get_max_scroll()
@@ -113,7 +114,7 @@ class ShopView(arcade.View):
             y = start_y - (row + 1) * (self.card_height + self.card_margin) - self.scroll_position
             
             if y + self.card_height >= content_bottom and y <= content_top:
-                self.draw_product_card(x, y, item)
+                self.draw_product_card(x, y, item, index)
         
         if self.header_available:
             arcade.draw_texture_rect(self.header, arcade.LBWH(0, screen_height - self.header_size, screen_width, self.header_size))
@@ -131,7 +132,7 @@ class ShopView(arcade.View):
         arcade.draw_circle_filled(coin_x, balance_y, 8, arcade.color.GOLD)
         arcade.draw_circle_outline(coin_x, balance_y, 8, arcade.color.DARK_GOLDENROD, 2)
     
-    def draw_product_card(self, x, y, item):
+    def draw_product_card(self, x, y, item, index):
         corner_radius = 10
         
         arcade.draw_lrbt_rectangle_filled(x + corner_radius, x + self.card_width - corner_radius, y, y + self.card_height, arcade.color.WHITE)
@@ -153,6 +154,11 @@ class ShopView(arcade.View):
         else:
             arcade.draw_text("?", image_x, image_y, arcade.color.BLACK, font_size=48, anchor_x="center", anchor_y="center", bold=True)
         
+        name_y = y + self.card_height - 130
+        arcade.draw_text(item['name'], x + self.card_width // 2, name_y, 
+                        arcade.color.BLACK, font_size=14, 
+                        anchor_x="center", anchor_y="center", bold=True)
+        
         prod_y = y + 110
         arcade.draw_text("Производит:", x + self.card_width // 2, prod_y, arcade.color.BLACK, font_size=10, anchor_x="center", anchor_y="center")
         
@@ -173,15 +179,24 @@ class ShopView(arcade.View):
         button_y = y + 15
         button_radius = 8
         
-        arcade.draw_lrbt_rectangle_filled(button_x + button_radius, button_x + button_width - button_radius, button_y, button_y + button_height, (128, 128, 128))
-        arcade.draw_lrbt_rectangle_filled(button_x, button_x + button_width, button_y + button_radius, button_y + button_height - button_radius, (128, 128, 128))
+        if self.balance >= item['price']:
+            button_color = (76, 175, 80)
+            button_text = "КУПИТЬ"
+        else:
+            button_color = (158, 158, 158)
+            button_text = "НЕДОСТАТОЧНО"
         
-        arcade.draw_circle_filled(button_x + button_radius, button_y + button_radius, button_radius, (128, 128, 128))
-        arcade.draw_circle_filled(button_x + button_width - button_radius, button_y + button_radius, button_radius, (128, 128, 128))
-        arcade.draw_circle_filled(button_x + button_radius, button_y + button_height - button_radius, button_radius, (128, 128, 128))
-        arcade.draw_circle_filled(button_x + button_width - button_radius, button_y + button_height - button_radius, button_radius, (128, 128, 128))
+        arcade.draw_lrbt_rectangle_filled(button_x + button_radius, button_x + button_width - button_radius, button_y, button_y + button_height, button_color)
+        arcade.draw_lrbt_rectangle_filled(button_x, button_x + button_width, button_y + button_radius, button_y + button_height - button_radius, button_color)
         
-        arcade.draw_text("КУПИТЬ", button_x + button_width // 2, button_y + button_height // 2, arcade.color.BLACK, font_size=12, anchor_x="center", anchor_y="center", bold=True)
+        arcade.draw_circle_filled(button_x + button_radius, button_y + button_radius, button_radius, button_color)
+        arcade.draw_circle_filled(button_x + button_width - button_radius, button_y + button_radius, button_radius, button_color)
+        arcade.draw_circle_filled(button_x + button_radius, button_y + button_height - button_radius, button_radius, button_color)
+        arcade.draw_circle_filled(button_x + button_width - button_radius, button_y + button_height - button_radius, button_radius, button_color)
+        
+        arcade.draw_text(button_text, button_x + button_width // 2, button_y + button_height // 2, 
+                        arcade.color.WHITE, font_size=12, 
+                        anchor_x="center", anchor_y="center", bold=True)
     
     def draw_coins(self, center_x, center_y, count):
         coin_radius = 8
@@ -198,6 +213,8 @@ class ShopView(arcade.View):
     def on_key_press(self, key, modifiers):
         if key == arcade.key.ESCAPE:
             self.window.show_view(self.game_view)
+        elif key == arcade.key.F11:
+            self.window.set_fullscreen(not self.window.fullscreen)
         elif key == arcade.key.DOWN:
             max_scroll = self.get_max_scroll()
             self.scroll_position = max(self.scroll_position - self.scroll_speed, -max_scroll)
@@ -209,3 +226,46 @@ class ShopView(arcade.View):
         self.scroll_position += scroll_y * self.scroll_speed
         max_scroll = self.get_max_scroll()
         self.scroll_position = max(-max_scroll, min(self.scroll_position, max_scroll))
+    
+    def on_mouse_press(self, x, y, button, modifiers):
+        screen_width = self.window.width
+        screen_height = self.window.height
+        
+        content_top = screen_height - self.header_size
+        content_bottom = 40
+        
+        total_width = self.cards_in_row * self.card_width + (self.cards_in_row - 1) * self.card_margin
+        start_x = (screen_width - total_width) // 2
+        start_y = content_top - self.card_margin
+        
+        for index, item in enumerate(self.shop_items):
+            row = index // self.cards_in_row
+            col = index % self.cards_in_row
+            
+            card_x = start_x + col * (self.card_width + self.card_margin)
+            card_y = start_y - (row + 1) * (self.card_height + self.card_margin) - self.scroll_position
+            
+            if card_y + self.card_height >= content_bottom and card_y <= content_top:
+                button_width = 120
+                button_height = 35
+                button_x = card_x + (self.card_width - button_width) // 2
+                button_y = card_y + 15
+                
+                if (button_x <= x <= button_x + button_width and 
+                    button_y <= y <= button_y + button_height and
+                    self.balance >= item['price']):
+                    
+                    if self.game_view.update_balance(-item['price']):
+                        item_copy = {
+                            'name': item['name'],
+                            'production': item['production'],
+                            'price': item['price']
+                        }
+                        
+                        if self.game_view.add_item_to_inventory(item_copy):
+                            self.balance = self.game_view.balance
+                            print(f"Куплен предмет: {item['name']}")
+                        else:
+                            self.game_view.update_balance(item['price'])
+                            print("Нет места в инвентаре!")
+                    break
