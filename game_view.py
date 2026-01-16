@@ -3,7 +3,6 @@ from shop_view import ShopView
 from generate_level import level
 from arcade.camera import Camera2D
 
-
 class GameView(arcade.View):
     def __init__(self, main_menu_view):
         super().__init__()
@@ -15,6 +14,8 @@ class GameView(arcade.View):
 
         self.tile_sprites = arcade.SpriteList()
         self.player_list = arcade.SpriteList()
+        self.fortress_sprites = arcade.SpriteList()
+        self.obstacle_sprites = arcade.SpriteList()
 
         self.world_camera = Camera2D()
         self.ui_camera = Camera2D()
@@ -33,6 +34,15 @@ class GameView(arcade.View):
         self.move_left = False
         self.move_right = False
 
+        self.show_inventory = False
+        
+        self.inventory_items = []
+        self.inventory_slots_count = 20
+        self.inventory_slot_size = 60
+        self.inventory_slot_spacing = 10
+        self.inventory_width = 5
+        self.inventory_height = 4
+
         try:
             self.map_image = arcade.load_texture("media/карта.png")
             self.map_loaded = True
@@ -44,6 +54,12 @@ class GameView(arcade.View):
             self.shop_button_loaded = True
         except FileNotFoundError:
             self.shop_button_loaded = False
+
+        try:
+            self.fortress_image = arcade.load_texture("media/крепость.png")
+            self.fortress_loaded = True
+        except FileNotFoundError:
+            self.fortress_loaded = False
 
         self.shop_button_width = 150
         self.shop_button_height = 60
@@ -58,9 +74,49 @@ class GameView(arcade.View):
 
         self.tile_sprites = arcade.SpriteList()
 
+        self.generate_sprites()
+        self.create_fortress()
 
-        self.generate_sprites()  # <-- добавь это!
-
+    def create_fortress(self):
+        if self.fortress_loaded:
+            fortress_x, fortress_y = None, None
+            for x in range(self.map_width):
+                for y in range(self.map_height):
+                    if self.level[x][y] == 3:
+                        fortress_x = x
+                        fortress_y = y
+                        break
+                if fortress_x is not None:
+                    break
+            
+            if fortress_x is not None:
+                tile_center_x = fortress_x * self.tile_size + self.tile_size // 2
+                tile_center_y = fortress_y * self.tile_size + self.tile_size // 2
+                
+                fortress_sprite = arcade.Sprite(
+                    "media/крепость.png",
+                    scale=1.0
+                )
+                
+                fortress_sprite.center_x = tile_center_x
+                fortress_sprite.center_y = tile_center_y
+                
+                self.fortress_sprites.append(fortress_sprite)
+                self.obstacle_sprites.append(fortress_sprite)
+            else:
+                fortress_x = self.map_width - 1
+                fortress_y = 0
+                tile_center_x = fortress_x * self.tile_size + self.tile_size // 2
+                tile_center_y = fortress_y * self.tile_size + self.tile_size // 2
+                
+                fortress_sprite = arcade.Sprite(
+                    "media/крепость.png",
+                    scale=1.0
+                )
+                fortress_sprite.center_x = tile_center_x
+                fortress_sprite.center_y = tile_center_y
+                self.fortress_sprites.append(fortress_sprite)
+                self.obstacle_sprites.append(fortress_sprite)
 
     def on_show_view(self):
         arcade.set_background_color(arcade.color.DARK_GREEN)
@@ -92,6 +148,64 @@ class GameView(arcade.View):
             slots.append((slot_left, slot_right, slot_bottom, slot_top))
 
         return slots
+    
+    def get_inventory_area(self):
+        screen_width = self.window.width
+        screen_height = self.window.height
+        
+        inv_width = screen_width * 0.7
+        inv_height = screen_height * 0.7
+        
+        inv_left = (screen_width - inv_width) // 2
+        inv_right = inv_left + inv_width
+        inv_bottom = (screen_height - inv_height) // 2
+        inv_top = inv_bottom + inv_height
+        
+        return inv_left, inv_right, inv_bottom, inv_top
+    
+    def get_inventory_slots(self):
+        inv_left, inv_right, inv_bottom, inv_top = self.get_inventory_area()
+        
+        padding = 20
+        
+        slots_left = inv_left + padding
+        slots_right = inv_right - padding
+        slots_bottom = inv_bottom + padding + 40
+        slots_top = inv_top - padding
+        
+        available_width = slots_right - slots_left
+        available_height = slots_top - slots_bottom
+        
+        columns = self.inventory_width
+        rows = self.inventory_height
+        
+        slot_width = min(self.inventory_slot_size, (available_width - (columns - 1) * self.inventory_slot_spacing) // columns)
+        slot_height = min(self.inventory_slot_size, (available_height - (rows - 1) * self.inventory_slot_spacing) // rows)
+        
+        total_grid_width = columns * slot_width + (columns - 1) * self.inventory_slot_spacing
+        total_grid_height = rows * slot_height + (rows - 1) * self.inventory_slot_spacing
+        
+        grid_start_x = slots_left + (available_width - total_grid_width) // 2
+        grid_start_y = slots_bottom + (available_height - total_grid_height) // 2
+        
+        slots = []
+        for row in range(rows):
+            for col in range(columns):
+                slot_index = row * columns + col
+                if slot_index >= self.inventory_slots_count:
+                    break
+                    
+                slot_x = grid_start_x + col * (slot_width + self.inventory_slot_spacing)
+                slot_y = grid_start_y + row * (slot_height + self.inventory_slot_spacing)
+                
+                slot_left = slot_x
+                slot_right = slot_x + slot_width
+                slot_bottom = slot_y
+                slot_top = slot_y + slot_height
+                
+                slots.append((slot_left, slot_right, slot_bottom, slot_top, slot_index))
+        
+        return slots, slot_width, slot_height
 
     def get_tile_color(self, value):
         if value == 0:
@@ -123,37 +237,107 @@ class GameView(arcade.View):
 
                 self.tile_sprites.append(sprite)
 
+    def draw_inventory(self):
+        inv_left, inv_right, inv_bottom, inv_top = self.get_inventory_area()
+        
+        arcade.draw_lrbt_rectangle_filled(
+            inv_left, inv_right, inv_bottom, inv_top,
+            arcade.color.WHITE
+        )
+        
+        title_x = (inv_left + inv_right) // 2
+        title_y = inv_top - 25
+        arcade.draw_text(
+            "ИНВЕНТАРЬ", title_x, title_y,
+            arcade.color.BLACK, font_size=24,
+            anchor_x="center", anchor_y="center",
+            bold=True
+        )
+        
+        slots, slot_width, slot_height = self.get_inventory_slots()
+        
+        for slot_left, slot_right, slot_bottom, slot_top, slot_index in slots:
+            arcade.draw_lrbt_rectangle_filled(
+                slot_left, slot_right, slot_bottom, slot_top,
+                arcade.color.LIGHT_GRAY
+            )
+            
+            slot_center_x = (slot_left + slot_right) // 2
+            slot_center_y = (slot_bottom + slot_top) // 2
+            arcade.draw_text(
+                str(slot_index + 1), slot_center_x, slot_center_y,
+                arcade.color.DARK_GRAY, font_size=12,
+                anchor_x="center", anchor_y="center"
+            )
+        
+        close_button_size = 30
+        close_button_left = inv_right - close_button_size - 10
+        close_button_right = close_button_left + close_button_size
+        close_button_bottom = inv_top - close_button_size - 10
+        close_button_top = close_button_bottom + close_button_size
+        
+        arcade.draw_lrbt_rectangle_filled(
+            close_button_left, close_button_right, close_button_bottom, close_button_top,
+            arcade.color.GRAY
+        )
+        arcade.draw_text(
+            "X", (close_button_left + close_button_right) // 2, 
+            (close_button_bottom + close_button_top) // 2,
+            arcade.color.WHITE, font_size=18,
+            anchor_x="center", anchor_y="center", bold=True
+        )
+        
+        self.close_button_area = (close_button_left, close_button_right, 
+                                 close_button_bottom, close_button_top)
+
     def on_draw(self):
         self.clear()
         screen_width = self.window.width
         screen_height = self.window.height
+        
         if self.map_loaded:
             arcade.draw_texture_rect(self.map_image, arcade.LBWH(0, 0, screen_width, screen_height))
         else:
             arcade.draw_lrbt_rectangle_filled(0, screen_width, 0, screen_height, arcade.color.DARK_GREEN)
-            arcade.draw_text("КАРТА НЕ ЗАГРУЖЕНА", screen_width // 2, screen_height // 2, arcade.color.WHITE, font_size=20, anchor_x="center", anchor_y="center", multiline=True, width=400, align="center")
+            arcade.draw_text("КАРТА НЕ ЗАГРУЖЕНА", screen_width // 2, screen_height // 2, 
+                           arcade.color.WHITE, font_size=20, anchor_x="center", 
+                           anchor_y="center", multiline=True, width=400, align="center")
 
         self.world_camera.use()
         self.tile_sprites.draw()
+        self.fortress_sprites.draw()
         self.player_list.draw()
 
         self.ui_camera.use()
 
         if self.shop_button_loaded:
             left, right, bottom, top = self.get_shop_button_area()
-            arcade.draw_texture_rect(self.shop_button_image, arcade.LBWH(left, bottom, self.shop_button_width, self.shop_button_height))
+            arcade.draw_texture_rect(self.shop_button_image, 
+                                   arcade.LBWH(left, bottom, self.shop_button_width, 
+                                              self.shop_button_height))
         else:
             left, right, bottom, top = self.get_shop_button_area()
             arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, arcade.color.ORANGE)
-            arcade.draw_text("МАГАЗИН", (left + right) / 2, (bottom + top) / 2, arcade.color.BLACK, font_size=14, anchor_x="center", anchor_y="center", bold=True)
+            arcade.draw_text("МАГАЗИН", (left + right) / 2, (bottom + top) / 2, 
+                           arcade.color.BLACK, font_size=14, anchor_x="center", 
+                           anchor_y="center", bold=True)
 
         slots = self.get_slots_area()
         for i, (slot_left, slot_right, slot_bottom, slot_top) in enumerate(slots):
-            arcade.draw_lrbt_rectangle_outline(slot_left, slot_right, slot_bottom, slot_top, arcade.color.WHITE, 2)
+            arcade.draw_lrbt_rectangle_outline(slot_left, slot_right, slot_bottom, 
+                                             slot_top, arcade.color.WHITE, 2)
 
             if i == self.slots_count - 1:
-                arcade.draw_text("+", (slot_left + slot_right) / 2, (slot_bottom + slot_top) / 2,
-                               arcade.color.WHITE, font_size=24, anchor_x="center", anchor_y="center", bold=True)
+                arcade.draw_text("+", (slot_left + slot_right) / 2, 
+                               (slot_bottom + slot_top) / 2,
+                               arcade.color.WHITE, font_size=24, 
+                               anchor_x="center", anchor_y="center", bold=True)
+        
+        if self.show_inventory:
+            arcade.draw_lrbt_rectangle_filled(0, screen_width, 0, screen_height,
+                                            (0, 0, 0, 180))
+            
+            self.draw_inventory()
 
     def on_update(self, delta_time):
         dx = 0
@@ -167,8 +351,17 @@ class GameView(arcade.View):
         if self.move_right:
             dx += self.player_speed * delta_time
 
+        old_x = self.player_sprite.center_x
+        old_y = self.player_sprite.center_y
+        
         self.player_sprite.center_x += dx
         self.player_sprite.center_y += dy
+        
+        collisions = arcade.check_for_collision_with_list(self.player_sprite, self.obstacle_sprites)
+        if collisions:
+            self.player_sprite.center_x = old_x
+            self.player_sprite.center_y = old_y
+        
         position = (
             self.player_sprite.center_x,
             self.player_sprite.center_y
@@ -176,25 +369,27 @@ class GameView(arcade.View):
         self.world_camera.position = arcade.math.lerp_2d(
             self.world_camera.position,
             position,
-            1,  # Плавность следования камеры
+            1,
         )
+    
     def on_key_press(self, key, modifiers):
         if key == arcade.key.ESCAPE:
-            self.window.show_view(self.main_menu)
+            if self.show_inventory:
+                self.show_inventory = False
+            else:
+                self.window.show_view(self.main_menu)
         elif key == arcade.key.F11:
             self.window.set_fullscreen(not self.window.fullscreen)
+        elif key == arcade.key.I or key == arcade.key.TAB:
+            self.show_inventory = not self.show_inventory
         elif key == arcade.key.UP or key == arcade.key.W:
             self.move_up = True
-            print("Вверх")
         elif key == arcade.key.DOWN or key == arcade.key.S:
             self.move_down = True
-            print("Вниз")
         elif key == arcade.key.LEFT or key == arcade.key.A:
             self.move_left = True
-            print("Влево")
         elif key == arcade.key.RIGHT or key == arcade.key.D:
             self.move_right = True
-            print("Вправо")
 
     def on_key_release(self, key, modifiers):
         if key in (arcade.key.W, arcade.key.UP):
@@ -206,8 +401,23 @@ class GameView(arcade.View):
         elif key in (arcade.key.D, arcade.key.RIGHT):
             self.move_right = False
 
-
     def on_mouse_press(self, x, y, button, modifiers):
+        if self.show_inventory:
+            if hasattr(self, 'close_button_area'):
+                close_left, close_right, close_bottom, close_top = self.close_button_area
+                if close_left <= x <= close_right and close_bottom <= y <= close_top:
+                    self.show_inventory = False
+                    return
+            
+            slots, _, _ = self.get_inventory_slots()
+            for slot_left, slot_right, slot_bottom, slot_top, slot_index in slots:
+                if slot_left <= x <= slot_right and slot_bottom <= y <= slot_top:
+                    return
+            
+            inv_left, inv_right, inv_bottom, inv_top = self.get_inventory_area()
+            if inv_left <= x <= inv_right and inv_bottom <= y <= inv_top:
+                return
+        
         left, right, bottom, top = self.get_shop_button_area()
         if left <= x <= right and bottom <= y <= top:
             self.window.show_view(ShopView(self))
@@ -217,9 +427,5 @@ class GameView(arcade.View):
         for i, (slot_left, slot_right, slot_bottom, slot_top) in enumerate(slots):
             if slot_left <= x <= slot_right and slot_bottom <= y <= slot_top:
                 if i == self.slots_count - 1:
-                    print("Клик по квадратику с плюсом")
-                else:
-                    print(f"Клик по пустому слоту {i + 1}")
+                    self.show_inventory = True
                 return
-
-        print(f"Клик по координатам: {x}, {y}")
