@@ -1,4 +1,5 @@
 import arcade
+import os
 
 class ShopView(arcade.View):
     def __init__(self, game_view):
@@ -7,6 +8,32 @@ class ShopView(arcade.View):
         self.balance = game_view.balance
         self.scroll_position = 0
         self.scroll_speed = 50
+        
+        self.custom_font_path = None
+        
+        possible_font_paths = [
+            "media/Nineteen Ninety Three.ttf",
+        ]
+        
+        for font_path in possible_font_paths:
+            if os.path.exists(font_path):
+                self.custom_font_path = font_path
+                break
+        
+        if not self.custom_font_path:
+            try:
+                available_fonts = arcade.get_font_names()
+                for font in available_fonts:
+                    if "nineteen" in font.lower() or "ninety" in font.lower() or "93" in font:
+                        self.custom_font_path = font
+                        break
+                
+                if not self.custom_font_path:
+                    self.custom_font_path = "Arial"
+            except:
+                self.custom_font_path = "Arial"
+        
+        self.use_font_file = os.path.exists(self.custom_font_path) if self.custom_font_path else False
         
         try:
             self.background = arcade.load_texture("media/фон.png")
@@ -25,6 +52,12 @@ class ShopView(arcade.View):
             self.footer_available = True
         except:
             self.footer_available = False
+        
+        try:
+            self.buy_button_texture = arcade.load_texture("media/купить.png")
+            self.buy_button_available = True
+        except:
+            self.buy_button_available = False
         
         self.shop_items = [
             {'name': 'Камни', 'image': 'media/камни.png', 'production': 1, 'price': 10},
@@ -58,6 +91,8 @@ class ShopView(arcade.View):
         self.card_margin = 20
         self.header_size = 80
         self.footer_size = 0
+        self.button_width = 100
+        self.button_height = 30
 
     def on_show_view(self):
         arcade.set_background_color(arcade.color.SKY_BLUE)
@@ -87,6 +122,14 @@ class ShopView(arcade.View):
         max_scroll = hidden_rows * (self.card_height + self.card_margin)
         
         return max_scroll
+        
+    def draw_text_with_font(self, text, x, y, color, font_size, **kwargs):
+        if self.use_font_file and self.custom_font_path:
+            arcade.draw_text(text, x, y, color, font_size, 
+                           font_name=self.custom_font_path, **kwargs)
+        else:
+            arcade.draw_text(text, x, y, color, font_size, 
+                           font_name=self.custom_font_path, **kwargs)
         
     def on_draw(self):
         self.clear()
@@ -121,17 +164,19 @@ class ShopView(arcade.View):
         else:
             arcade.draw_lrbt_rectangle_filled(0, screen_width, screen_height - self.header_size, screen_height, (218, 165, 32))
             arcade.draw_lrbt_rectangle_outline(0, screen_width, screen_height - self.header_size, screen_height, arcade.color.DARK_GOLDENROD, border_width=4)
-            arcade.draw_text("МАГАЗИН", screen_width // 2, screen_height - self.header_size // 2, arcade.color.BLACK, font_size=28, anchor_x="center", anchor_y="center", bold=True)
+            self.draw_text_with_font("МАГАЗИН", screen_width // 2, screen_height - self.header_size // 2, 
+                                   arcade.color.WHITE, font_size=28, 
+                                   anchor_x="center", anchor_y="center", bold=True)
         
         balance_x = 20
         balance_y = screen_height - 30
         
-        arcade.draw_text(f"Баланс: {self.balance}", balance_x, balance_y, arcade.color.WHITE, font_size=16, anchor_x="left", anchor_y="center", bold=True)
+        self.draw_text_with_font(f"Баланс: {self.balance}", balance_x, balance_y, 
+                               arcade.color.WHITE, font_size=16, 
+                               anchor_x="left", anchor_y="center", bold=True)
         
         coin_x = balance_x + 100
-        arcade.draw_circle_filled(coin_x, balance_y, 8, arcade.color.GOLD)
-        arcade.draw_circle_outline(coin_x, balance_y, 8, arcade.color.DARK_GOLDENROD, 2)
-    
+       
     def draw_product_card(self, x, y, item, index):
         corner_radius = 10
         
@@ -152,51 +197,76 @@ class ShopView(arcade.View):
         if item['texture']:
             arcade.draw_texture_rect(item['texture'], arcade.LBWH(image_x - image_size // 2, image_y - image_size // 2, image_size, image_size))
         else:
-            arcade.draw_text("?", image_x, image_y, arcade.color.BLACK, font_size=48, anchor_x="center", anchor_y="center", bold=True)
+            self.draw_text_with_font("?", image_x, image_y, arcade.color.BLACK, font_size=48, 
+                                   anchor_x="center", anchor_y="center", bold=True)
         
         name_y = y + self.card_height - 130
-        arcade.draw_text(item['name'], x + self.card_width // 2, name_y, 
-                        arcade.color.BLACK, font_size=14, 
-                        anchor_x="center", anchor_y="center", bold=True)
+        self.draw_text_with_font(item['name'], x + self.card_width // 2, name_y, 
+                               arcade.color.BLACK, font_size=14, 
+                               anchor_x="center", anchor_y="center", bold=True)
         
-        prod_y = y + 110
-        arcade.draw_text("Производит:", x + self.card_width // 2, prod_y, arcade.color.BLACK, font_size=10, anchor_x="center", anchor_y="center")
+        prod_y = y + 95
+        self.draw_text_with_font("Производит:", x + self.card_width // 2, prod_y, 
+                               arcade.color.BLACK, font_size=10, 
+                               anchor_x="center", anchor_y="center")
         
         coin_y = prod_y - 20
         self.draw_coins(x + self.card_width // 2, coin_y, item['production'])
         
-        price_y = y + 65
-        arcade.draw_text(f"Цена:", x + self.card_width // 2 - 20, price_y, arcade.color.DARK_GRAY, font_size=11, anchor_x="center", anchor_y="center", bold=True)
-        arcade.draw_text(f"{item['price']}", x + self.card_width // 2 + 10, price_y, arcade.color.DARK_GRAY, font_size=11, anchor_x="center", anchor_y="center", bold=True)
+        price_y = y + 60
+        self.draw_text_with_font(f"Цена:", x + self.card_width // 2 - 25, price_y,
+                               arcade.color.DARK_GRAY, font_size=11, 
+                               anchor_x="center", anchor_y="center", bold=True)
+        self.draw_text_with_font(f"{item['price']}", x + self.card_width // 2 + 15, price_y,
+                               arcade.color.DARK_GRAY, font_size=11, 
+                               anchor_x="center", anchor_y="center", bold=True)
         
-        coin_icon_x = x + self.card_width // 2 + 30
+        coin_icon_x = x + self.card_width // 2 + 35
         arcade.draw_circle_filled(coin_icon_x, price_y, 6, arcade.color.GOLD)
         arcade.draw_circle_outline(coin_icon_x, price_y, 6, arcade.color.DARK_GOLDENROD, 2)
         
-        button_width = 120
-        button_height = 35
-        button_x = x + (self.card_width - button_width) // 2
-        button_y = y + 15
-        button_radius = 8
+        button_x = x + (self.card_width - self.button_width) // 2
+        button_y = y + 20
         
         if self.balance >= item['price']:
-            button_color = (76, 175, 80)
-            button_text = "КУПИТЬ"
+            if self.buy_button_available:
+                arcade.draw_texture_rect(self.buy_button_texture, 
+                                        arcade.LBWH(button_x, button_y, self.button_width, self.button_height))
+            else:
+                arcade.draw_rectangle_filled(button_x + self.button_width // 2, 
+                                           button_y + self.button_height // 2,
+                                           self.button_width, self.button_height,
+                                           (76, 175, 80))
+                self.draw_text_with_font("КУПИТЬ", button_x + self.button_width // 2, 
+                                       button_y + self.button_height // 2,
+                                       arcade.color.WHITE, font_size=12, 
+                                       anchor_x="center", anchor_y="center", bold=True)
         else:
-            button_color = (158, 158, 158)
-            button_text = "НЕДОСТАТОЧНО"
-        
-        arcade.draw_lrbt_rectangle_filled(button_x + button_radius, button_x + button_width - button_radius, button_y, button_y + button_height, button_color)
-        arcade.draw_lrbt_rectangle_filled(button_x, button_x + button_width, button_y + button_radius, button_y + button_height - button_radius, button_color)
-        
-        arcade.draw_circle_filled(button_x + button_radius, button_y + button_radius, button_radius, button_color)
-        arcade.draw_circle_filled(button_x + button_width - button_radius, button_y + button_radius, button_radius, button_color)
-        arcade.draw_circle_filled(button_x + button_radius, button_y + button_height - button_radius, button_radius, button_color)
-        arcade.draw_circle_filled(button_x + button_width - button_radius, button_y + button_height - button_radius, button_radius, button_color)
-        
-        arcade.draw_text(button_text, button_x + button_width // 2, button_y + button_height // 2, 
-                        arcade.color.WHITE, font_size=12, 
-                        anchor_x="center", anchor_y="center", bold=True)
+            if self.buy_button_available:
+                arcade.draw_rectangle_filled(button_x + self.button_width // 2, 
+                                           button_y + self.button_height // 2,
+                                           self.button_width, self.button_height,
+                                           (100, 100, 100, 150))
+                arcade.draw_texture_rect(self.buy_button_texture, 
+                                        arcade.LBWH(button_x, button_y, self.button_width, self.button_height))
+                arcade.draw_rectangle_filled(button_x + self.button_width // 2, 
+                                           button_y + self.button_height // 2,
+                                           self.button_width, self.button_height,
+                                           (0, 0, 0, 100))
+                
+                self.draw_text_with_font("НЕДОСТАТОЧНО", button_x + self.button_width // 2, 
+                                       button_y + self.button_height // 2,
+                                       arcade.color.WHITE, font_size=8, 
+                                       anchor_x="center", anchor_y="center", bold=True)
+            else:
+                arcade.draw_rectangle_filled(button_x + self.button_width // 2, 
+                                           button_y + self.button_height // 2,
+                                           self.button_width, self.button_height,
+                                           (158, 158, 158))
+                self.draw_text_with_font("НЕДОСТАТОЧНО", button_x + self.button_width // 2, 
+                                       button_y + self.button_height // 2,
+                                       arcade.color.WHITE, font_size=9, 
+                                       anchor_x="center", anchor_y="center", bold=True)
     
     def draw_coins(self, center_x, center_y, count):
         coin_radius = 8
@@ -246,13 +316,11 @@ class ShopView(arcade.View):
             card_y = start_y - (row + 1) * (self.card_height + self.card_margin) - self.scroll_position
             
             if card_y + self.card_height >= content_bottom and card_y <= content_top:
-                button_width = 120
-                button_height = 35
-                button_x = card_x + (self.card_width - button_width) // 2
-                button_y = card_y + 15
+                button_x = card_x + (self.card_width - self.button_width) // 2
+                button_y = card_y + 20
                 
-                if (button_x <= x <= button_x + button_width and 
-                    button_y <= y <= button_y + button_height and
+                if (button_x <= x <= button_x + self.button_width and 
+                    button_y <= y <= button_y + self.button_height and
                     self.balance >= item['price']):
                     
                     if self.game_view.update_balance(-item['price']):
