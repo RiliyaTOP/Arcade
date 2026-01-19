@@ -7,6 +7,8 @@ class Level:
         self.enemyMatrix = [[0 for _ in range(number_level)] for _ in range(number_level)]
         self.caves = []
         self.rotation = []
+        self.enemy = []
+
 
     def generate_level(self) -> list[int]:
         """Создание матрицы уровня"""
@@ -26,7 +28,7 @@ class Level:
         rotation = []  #Список координат поворота для дороги
 
         heart_row = number_level // 2 + 1
-        cave_col = -2
+        cave_col = width - 2
 
         matrixLevel[heart_row][1] = heart #Расположение кристала
 
@@ -77,7 +79,23 @@ class Level:
         self.rotation = rotation
         return self.matrixLevel
 
-    #def spawn_enemy(self, *item):
-    #    enemy = item
-    #    for i in range(len(enemy)):
-    #        i.set_cords(self.caves[random.randint(0, len(self.caves) - 1)])
+    def spawn_enemy(self, enemies: list):
+        self.enemy = enemies
+        for e in self.enemy:
+            e.set_coords(self.caves[random.randint(0, len(self.caves) - 1)])
+
+    def get_enemy_coords(self):
+        coords = []
+        for i in self.enemy:
+            coords.append(i.get_coords())
+        return coords
+
+    def move_enemy(self, delta_time):
+        for i in self.enemy:
+            x, y = i.get_coords()
+            if self.matrixLevel[int(x + 1)][int(y)] == 1:
+                i.set_coords((x + delta_time / i.get_speed(), y))
+            elif self.matrixLevel[int(x)][int(y + 1)] == 1:
+                i.set_coords((x, y + delta_time / i.get_speed()))
+            elif self.matrixLevel[int(x)][int(y - 1)] == 1:
+                i.set_coords((x, y - delta_time / i.get_speed()))

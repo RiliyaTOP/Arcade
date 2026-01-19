@@ -2,17 +2,23 @@ import arcade
 from shop_view import ShopView
 import generate_level
 from arcade.camera import Camera2D
+import enemy
 
 class GameView(arcade.View):
     def __init__(self, main_menu_view):
         super().__init__()
-        number_level = 15
+        number_level = 7
         self.level = generate_level.Level(number_level)
         self.map_level = self.level.generate_level()
         self.main_menu = main_menu_view
         self.map_width = len(self.map_level)
         self.map_height = len(self.map_level[0])
         self.tile_size = 64
+        self.enemy_list = arcade.SpriteList()
+        self.enemy = [enemy.Enemy(0, 0, 10, 10, 10)]
+        self.level.spawn_enemy(self.enemy)
+        print(self.level.get_enemy_coords())
+        self.create_enemy_sprites()
 
         self.tile_sprites = arcade.SpriteList()
         self.player_list = arcade.SpriteList()
@@ -85,6 +91,21 @@ class GameView(arcade.View):
         self.last_click_time = 0
         self.double_click_delay = 0.3
         self.last_clicked_slot = None
+
+    def create_enemy_sprites(self):
+        self.enemy_list.clear()
+
+        for e in self.enemy:
+            sprite = arcade.Sprite(
+                "media/рыцарь.png",
+                scale=0.5
+            )
+
+            sprite.center_x = e.x * self.tile_size + self.tile_size // 2
+            sprite.center_y = e.y * self.tile_size + self.tile_size // 2
+
+            e.sprite = sprite
+            self.enemy_list.append(sprite)
 
     def create_fortress(self):
         if self.fortress_loaded:
@@ -384,6 +405,7 @@ class GameView(arcade.View):
         self.world_camera.use()
         self.tile_sprites.draw()
         self.fortress_sprites.draw()
+        self.enemy_list.draw()
         self.player_list.draw()
 
         self.ui_camera.use()
@@ -482,6 +504,13 @@ class GameView(arcade.View):
 
         if self.last_click_time > 0:
             self.last_click_time -= delta_time
+
+        self.level.move_enemy(delta_time)
+
+        for e in self.enemy:
+            if e.sprite:
+                e.sprite.center_x = e.x * self.tile_size + self.tile_size // 2
+                e.sprite.center_y = e.y * self.tile_size + self.tile_size // 2
 
     def on_key_press(self, key, modifiers):
         if key == arcade.key.ESCAPE:
