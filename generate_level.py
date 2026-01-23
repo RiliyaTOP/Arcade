@@ -9,33 +9,30 @@ class Level:
         self.rotation = []
         self.enemy = []
 
-
     def generate_level(self) -> list[int]:
-        """Создание матрицы уровня"""
         number_level = self.number_level
-        random.seed(number_level) #Сид для генерации одинаковых уровней
+        random.seed(number_level)
 
         n = random.randint(1, number_level)
         height = number_level // 2 * 2 + 3
         width = n + 10 * (number_level // 7 + 1)
 
-        matrixLevel = [[0 for _ in range(width)] for _ in range(height)] #Создание пустой матрицы
+        matrixLevel = [[0 for _ in range(width)] for _ in range(height)]
 
         heart = 3
         cave = 2
         road = 1
 
-        rotation = []  #Список координат поворота для дороги
+        rotation = []
 
         heart_row = number_level // 2 + 1
         cave_col = width - 2
 
-        matrixLevel[heart_row][1] = heart #Расположение кристала
+        matrixLevel[heart_row][1] = heart
 
-        a = number_level // 7 + 1 #Примерное количество cave
-        a1 = (width - 4) // (a + 1) #Разбитие поля для создания поворотов
+        a = number_level // 7 + 1
+        a1 = (width - 4) // (a + 1)
 
-        #Расчёт координат поворота и пещер
         for i in range(number_level // 7 + 1):
             if i * 4 > heart_row:
                 break
@@ -50,18 +47,16 @@ class Level:
 
             if 0 <= row < len(matrixLevel) and mirror_row != row:
                 matrixLevel[row][cave_col] = cave
-                b = random.randint(1, a) + 1 #Случайное смещение
+                b = random.randint(1, a) + 1
                 rotation.append((row, (width - max(a - i, i - a) * a1 - b)))
                 self.caves.append((row, cave_col))
 
             if 0 <= mirror_row < len(matrixLevel) and mirror_row != row:
                 matrixLevel[mirror_row][cave_col] = cave
-                b = random.randint(1, a) + 1# Случайное смещение
+                b = random.randint(1, a) + 1
                 rotation.append((mirror_row, (width - max(a - i, i - a) * a1 - b)))
                 self.caves.append((mirror_row, cave_col))
 
-
-        #Проставление дороги
         for i in range(len(rotation)):
             for j in range(rotation[i][1], width - 2):
                 matrixLevel[rotation[i][0]][j] = road
@@ -81,8 +76,28 @@ class Level:
 
     def spawn_enemy(self, enemies: list):
         self.enemy = enemies
-        for e in self.enemy:
-            e.set_coords(self.caves[random.randint(0, len(self.caves) - 1)])
+        
+        available_caves = self.caves.copy()
+        random.shuffle(available_caves)
+        
+        for i, enemy_obj in enumerate(self.enemy):
+            if i < len(available_caves):
+                cave_coords = available_caves[i]
+                enemy_obj.set_coords(cave_coords)
+            else:
+                road_cells = []
+                for x in range(len(self.matrixLevel)):
+                    for y in range(len(self.matrixLevel[0])):
+                        if self.matrixLevel[x][y] == 1:
+                            road_cells.append((x, y))
+                
+                if road_cells:
+                    spawn_point = random.choice(road_cells)
+                    enemy_obj.set_coords(spawn_point)
+                else:
+                    random_x = random.randint(0, len(self.matrixLevel) - 1)
+                    random_y = random.randint(0, len(self.matrixLevel[0]) - 1)
+                    enemy_obj.set_coords([random_x, random_y])
 
     def get_enemy_coords(self):
         coords = []
@@ -91,11 +106,4 @@ class Level:
         return coords
 
     def move_enemy(self, delta_time):
-        for i in self.enemy:
-            x, y = i.get_coords()
-            if self.matrixLevel[int(x + 1)][int(y)] == 1:
-                i.set_coords((x + delta_time / i.get_speed(), y))
-            elif self.matrixLevel[int(x)][int(y + 1)] == 1:
-                i.set_coords((x, y + delta_time / i.get_speed()))
-            elif self.matrixLevel[int(x)][int(y - 1)] == 1:
-                i.set_coords((x, y - delta_time / i.get_speed()))
+        pass

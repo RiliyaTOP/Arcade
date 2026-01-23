@@ -1,5 +1,5 @@
 import arcade
-from game_view import GameView
+from game_view import GameView  # Импортируем GameView из game_view
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600

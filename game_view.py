@@ -3,6 +3,10 @@ from shop_view import ShopView
 import generate_level
 from arcade.camera import Camera2D
 import enemy
+import os
+import time
+from enemy_manager import EnemyManager
+from player import Player
 
 class GameView(arcade.View):
     def __init__(self, main_menu_view):
@@ -14,34 +18,24 @@ class GameView(arcade.View):
         self.map_width = len(self.map_level)
         self.map_height = len(self.map_level[0])
         self.tile_size = 64
-        self.enemy_list = arcade.SpriteList()
-        self.enemy = [enemy.Enemy(0, 0, 10, 10, 10)]
-        self.level.spawn_enemy(self.enemy)
-        print(self.level.get_enemy_coords())
-        self.create_enemy_sprites()
-
+        
+        self.custom_font = self.load_custom_font()
+        
+        self.enemy_manager = EnemyManager(self)
+        self.enemy_manager.create_enemies()
+        
         self.tile_sprites = arcade.SpriteList()
-        self.player_list = arcade.SpriteList()
         self.fortress_sprites = arcade.SpriteList()
         self.obstacle_sprites = arcade.SpriteList()
+        
+        self.placed_items = []
+        self.placed_items_sprites = arcade.SpriteList()
 
         self.world_camera = Camera2D()
         self.ui_camera = Camera2D()
-
-        self.player_sprite = arcade.Sprite(
-            ":resources:images/animated_characters/female_person/femalePerson_idle.png",
-            scale=0.5
-        )
-        self.player_sprite.center_x = self.map_width * self.tile_size // 2
-        self.player_sprite.center_y = self.map_height * self.tile_size // 2
-        self.player_list.append(self.player_sprite)
-
-        self.player_speed = 300
-        self.move_up = False
-        self.move_down = False
-        self.move_left = False
-        self.move_right = False
-
+        
+        self.player = Player(self.tile_size, self.map_width, self.map_height)
+        
         self.show_inventory = False
 
         self.inventory_items = []
@@ -57,6 +51,14 @@ class GameView(arcade.View):
         self.slot_spacing = 10
 
         self.balance = 100
+
+        self.item_to_place = None
+        self.placing_slot_index = None
+        self.show_placement_hint = False
+        self.placement_hint_timer = 0
+
+        self.item_textures = {}
+        self.load_item_textures()
 
         try:
             self.map_image = arcade.load_texture("media/карта.png")
@@ -92,20 +94,83 @@ class GameView(arcade.View):
         self.double_click_delay = 0.3
         self.last_clicked_slot = None
 
-    def create_enemy_sprites(self):
-        self.enemy_list.clear()
+        self.fortress_coords = self.find_fortress_coords()
+        
+        self.add_test_items_to_inventory()
+        
+        self.add_static_obstacles()
+        
+        self.enemy_collision_timer = 0
+        self.collision_threshold = 5.0
+        self.is_colliding_with_enemy = False
 
-        for e in self.enemy:
-            sprite = arcade.Sprite(
-                "media/рыцарь.png",
-                scale=0.5
-            )
+    def add_static_obstacles(self):
+        for item_sprite in self.placed_items_sprites:
+            self.obstacle_sprites.append(item_sprite)
+    
+    def load_custom_font(self):
+        possible_font_paths = [
+            "media/Nineteen Ninety Three.ttf",
+        ]
+        
+        for font_path in possible_font_paths:
+            if os.path.exists(font_path):
+                return font_path
+        
+        try:
+            available_fonts = arcade.get_font_names()
+            for font in available_fonts:
+                if "nineteen" in font.lower() or "ninety" in font.lower() or "93" in font:
+                    return font
+        except:
+            pass
+        
+        return "Arial"
 
-            sprite.center_x = e.x * self.tile_size + self.tile_size // 2
-            sprite.center_y = e.y * self.tile_size + self.tile_size // 2
+    def add_test_items_to_inventory(self):
+        test_items = [
+            {'name': 'Камни', 'production': 1, 'price': 10},
+            {'name': 'Банан', 'production': 3, 'price': 25},
+            {'name': 'Костер', 'production': 5, 'price': 50},
+        ]
+        for item in test_items:
+            self.add_item_to_inventory(item)
 
-            e.sprite = sprite
-            self.enemy_list.append(sprite)
+    def load_item_textures(self):
+        items = {
+            'Камни': 'media/камни.png',
+            'Камни 2': 'media/камни.png',
+            'Камни 3': 'media/камни.png',
+            'Камни 4': 'media/камни.png',
+            'Банан': 'media/банан.png',
+            'Банан 2': 'media/банан.png',
+            'Банан 3': 'media/банан.png',
+            'Банан 4': 'media/банан.png',
+            'Банан 5': 'media/банан.png',
+            'Банан 6': 'media/банан.png',
+            'Банан 7': 'media/банан.png',
+            'Банан 8': 'media/банан.png',
+            'Костер': 'media/костер.png',
+            'Костер 2': 'media/костер.png',
+            'Костер 3': 'media/костер.png',
+            'Костер 4': 'media/костер.png'
+        }
+        
+        for item_name, texture_path in items.items():
+            try:
+                if os.path.exists(texture_path):
+                    self.item_textures[item_name] = arcade.load_texture(texture_path)
+                else:
+                    self.item_textures[item_name] = None
+            except:
+                self.item_textures[item_name] = None
+
+    def find_fortress_coords(self):
+        for x in range(self.map_width):
+            for y in range(self.map_height):
+                if self.map_level[x][y] == 3:
+                    return (x, y)
+        return None
 
     def create_fortress(self):
         if self.fortress_loaded:
@@ -243,11 +308,11 @@ class GameView(arcade.View):
         if value == 0:
             return (255, 255, 255, 0)
         elif value == 1:
-            return arcade.color.BROWN
+            return (255, 255, 255, 0)
         elif value == 2:
-            return arcade.color.DARK_BLUE
+            return (255, 255, 255, 0)
         elif value == 3:
-            return arcade.color.GRAY
+            return (255, 255, 255, 0)
         else:
             return arcade.color.BLACK
 
@@ -257,17 +322,21 @@ class GameView(arcade.View):
         for y in range(self.map_height):
             for x in range(self.map_width):
                 tile_value = self.map_level[x][y]
-
-                sprite = arcade.SpriteSolidColor(
-                    self.tile_size,
-                    self.tile_size,
-                    color=self.get_tile_color(tile_value)
-                )
-
-                sprite.center_x = x * self.tile_size + self.tile_size // 2
-                sprite.center_y = y * self.tile_size + self.tile_size // 2
-
-                self.tile_sprites.append(sprite)
+                
+                if tile_value in [1, 2, 3]:
+                    continue
+                
+                if tile_value == 0:
+                    sprite = arcade.SpriteSolidColor(
+                        self.tile_size,
+                        self.tile_size,
+                        color=self.get_tile_color(tile_value)
+                    )
+                    
+                    sprite.center_x = x * self.tile_size + self.tile_size // 2
+                    sprite.center_y = y * self.tile_size + self.tile_size // 2
+                    
+                    self.tile_sprites.append(sprite)
 
     def draw_inventory(self):
         inv_left, inv_right, inv_bottom, inv_top = self.get_inventory_area()
@@ -298,10 +367,17 @@ class GameView(arcade.View):
         slots, slot_width, slot_height = self.get_inventory_slots()
 
         for slot_left, slot_right, slot_bottom, slot_top, slot_index in slots:
-            arcade.draw_lrbt_rectangle_filled(
-                slot_left, slot_right, slot_bottom, slot_top,
-                arcade.color.LIGHT_GRAY
-            )
+            if self.item_to_place and slot_index == self.placing_slot_index:
+                arcade.draw_lrbt_rectangle_filled(
+                    slot_left, slot_right, slot_bottom, slot_top,
+                    (255, 255, 200, 200)
+                )
+            else:
+                arcade.draw_lrbt_rectangle_filled(
+                    slot_left, slot_right, slot_bottom, slot_top,
+                    arcade.color.LIGHT_GRAY
+                )
+            
             arcade.draw_lrbt_rectangle_outline(
                 slot_left, slot_right, slot_bottom, slot_top,
                 arcade.color.DARK_GRAY, 2
@@ -312,26 +388,33 @@ class GameView(arcade.View):
 
             if slot_index < len(self.inventory_items):
                 item = self.inventory_items[slot_index]
-
-                if item['name'].startswith('Камни'):
-                    color = (169, 169, 169)
-                elif item['name'].startswith('Банан'):
-                    color = arcade.color.YELLOW
-                elif item['name'].startswith('Костер'):
-                    color = arcade.color.ORANGE_RED
-                else:
-                    color = arcade.color.BLUE
-
+                
                 item_width = slot_width * 0.8
                 item_height = slot_height * 0.8
                 item_left = slot_left + (slot_width - item_width) / 2
                 item_bottom = slot_bottom + (slot_height - item_height) / 2
-
-                arcade.draw_lrbt_rectangle_filled(
-                    item_left, item_left + item_width,
-                    item_bottom, item_bottom + item_height,
-                    color
-                )
+                
+                texture = self.item_textures.get(item['name'])
+                if texture:
+                    arcade.draw_texture_rect(
+                        texture,
+                        arcade.LBWH(item_left, item_bottom, item_width, item_height)
+                    )
+                else:
+                    if item['name'].startswith('Камни'):
+                        color = (169, 169, 169)
+                    elif item['name'].startswith('Банан'):
+                        color = arcade.color.YELLOW
+                    elif item['name'].startswith('Костер'):
+                        color = arcade.color.ORANGE_RED
+                    else:
+                        color = arcade.color.BLUE
+                    
+                    arcade.draw_lrbt_rectangle_filled(
+                        item_left, item_left + item_width,
+                        item_bottom, item_bottom + item_height,
+                        color
+                    )
 
                 name_y = slot_bottom - 15
                 arcade.draw_text(
@@ -368,19 +451,28 @@ class GameView(arcade.View):
 
     def add_item_to_inventory(self, item):
         if len(self.inventory_items) < self.inventory_slots_count:
-            self.inventory_items.append(item)
+            if isinstance(item, dict) and 'name' in item:
+                self.inventory_items.append(item)
+            else:
+                item_dict = {
+                    'name': str(item),
+                    'production': 0,
+                    'price': 0
+                }
+                self.inventory_items.append(item_dict)
             return True
         return False
 
     def add_item_to_quick_slot(self, item, slot_index):
-        if 0 <= slot_index < len(self.quick_slots) - 1:
+        if 0 <= slot_index < len(self.quick_slots):
             self.quick_slots[slot_index] = item
             return True
         return False
 
     def remove_item_from_inventory(self, slot_index):
         if 0 <= slot_index < len(self.inventory_items):
-            return self.inventory_items.pop(slot_index)
+            removed = self.inventory_items.pop(slot_index)
+            return removed
         return None
 
     def update_balance(self, amount):
@@ -405,8 +497,12 @@ class GameView(arcade.View):
         self.world_camera.use()
         self.tile_sprites.draw()
         self.fortress_sprites.draw()
-        self.enemy_list.draw()
-        self.player_list.draw()
+        
+        self.placed_items_sprites.draw()
+        
+        self.enemy_manager.draw()
+        
+        self.player.draw()
 
         self.ui_camera.use()
 
@@ -433,22 +529,35 @@ class GameView(arcade.View):
                                  arcade.color.WHITE, font_size=24,
                                  anchor_x="center", anchor_y="center", bold=True)
             else:
-                if self.quick_slots[slot_index] is not None:
+                if slot_index < len(self.quick_slots) and self.quick_slots[slot_index] is not None:
                     item = self.quick_slots[slot_index]
-                    if item['name'].startswith('Камни'):
-                        color = (169, 169, 169)
-                    elif item['name'].startswith('Банан'):
-                        color = arcade.color.YELLOW
-                    elif item['name'].startswith('Костер'):
-                        color = arcade.color.ORANGE_RED
+                    
+                    item_width = self.slot_size * 0.8
+                    item_height = self.slot_size * 0.8
+                    item_left = slot_left + (self.slot_size - item_width) / 2
+                    item_bottom = slot_bottom + (self.slot_size - item_height) / 2
+                    
+                    texture = self.item_textures.get(item['name'])
+                    if texture:
+                        arcade.draw_texture_rect(
+                            texture,
+                            arcade.LBWH(item_left, item_bottom, item_width, item_height)
+                        )
                     else:
-                        color = arcade.color.BLUE
+                        if item['name'].startswith('Камни'):
+                            color = (169, 169, 169)
+                        elif item['name'].startswith('Банан'):
+                            color = arcade.color.YELLOW
+                        elif item['name'].startswith('Костер'):
+                            color = arcade.color.ORANGE_RED
+                        else:
+                            color = arcade.color.BLUE
 
-                    arcade.draw_lrbt_rectangle_filled(
-                        slot_left + 5, slot_right - 5,
-                        slot_bottom + 5, slot_top - 5,
-                        color
-                    )
+                        arcade.draw_lrbt_rectangle_filled(
+                            item_left, item_left + item_width,
+                            item_bottom, item_bottom + item_height,
+                            color
+                        )
 
                     arcade.draw_text(
                         str(slot_index + 1),
@@ -468,34 +577,149 @@ class GameView(arcade.View):
             arcade.draw_lrbt_rectangle_filled(0, screen_width, 0, screen_height,
                                               (0, 0, 0, 180))
             self.draw_inventory()
+            
+        if self.is_colliding_with_enemy:
+            remaining_time = self.collision_threshold - self.enemy_collision_timer
+            
+            if int(self.enemy_collision_timer * 2) % 2 == 0:
+                arcade.draw_text(
+                    "ОПАСНОСТЬ!",
+                    screen_width // 2, screen_height - 80,
+                    arcade.color.RED, font_size=32,
+                    anchor_x="center", anchor_y="center",
+                    bold=True,
+                    font_name=self.custom_font
+                )
+            
+            arcade.draw_text(
+                f"Отойдите от врага: {remaining_time:.1f} сек",
+                screen_width // 2, screen_height - 120,
+                arcade.color.ORANGE, font_size=18,
+                anchor_x="center", anchor_y="center",
+                bold=True,
+                font_name=self.custom_font
+            )
+            
+            bar_width = 300
+            bar_height = 20
+            bar_x = screen_width // 2 - bar_width // 2
+            bar_y = screen_height - 150
+            
+            arcade.draw_lrbt_rectangle_filled(
+                bar_x, bar_x + bar_width,
+                bar_y, bar_y + bar_height,
+                arcade.color.DARK_RED
+            )
+            
+            fill_width = bar_width * (self.enemy_collision_timer / self.collision_threshold)
+            arcade.draw_lrbt_rectangle_filled(
+                bar_x, bar_x + fill_width,
+                bar_y, bar_y + bar_height,
+                arcade.color.RED
+            )
+            
+            arcade.draw_lrbt_rectangle_outline(
+                bar_x, bar_x + bar_width,
+                bar_y, bar_y + bar_height,
+                arcade.color.WHITE, 2
+            )
+
+    def select_item_for_placement(self, slot_index):
+        if 0 <= slot_index < len(self.quick_slots) and self.quick_slots[slot_index] is not None:
+            self.item_to_place = self.quick_slots[slot_index]
+            self.placing_slot_index = slot_index
+            self.show_placement_hint = False
+
+    def cancel_item_selection(self):
+        self.item_to_place = None
+        self.placing_slot_index = None
+
+    def place_item_on_map(self, world_x, world_y):
+        if not self.item_to_place:
+            return False
+        
+        tile_x = int(world_x // self.tile_size)
+        tile_y = int(world_y // self.tile_size)
+        
+        if not (0 <= tile_x < self.map_width and 0 <= tile_y < self.map_height):
+            return False
+        
+        for enemy_obj in self.enemy_manager.get_enemies():
+            enemy_tile_x = int(enemy_obj.x)
+            enemy_tile_y = int(enemy_obj.y)
+            if enemy_tile_x == tile_x and enemy_tile_y == tile_y:
+                return False
+        
+        for placed_item in self.placed_items:
+            if placed_item[0] == tile_x and placed_item[1] == tile_y:
+                return False
+        
+        tile_value = self.map_level[tile_x][tile_y]
+        
+        if tile_value == 3:
+            return False
+        elif tile_value == 2:
+            return False
+        elif tile_value == 0:
+            pass
+        elif tile_value == 1:
+            pass
+        
+        texture = self.item_textures.get(self.item_to_place['name'])
+        sprite = None
+        
+        if texture:
+            sprite = arcade.Sprite()
+            sprite.texture = texture
+            sprite.scale = 1.0
+        else:
+            if self.item_to_place['name'].startswith('Камни'):
+                color = (169, 169, 169)
+            elif self.item_to_place['name'].startswith('Банан'):
+                color = arcade.color.YELLOW
+            elif self.item_to_place['name'].startswith('Костер'):
+                color = arcade.color.ORANGE_RED
+            else:
+                color = arcade.color.BLUE
+            
+            sprite = arcade.SpriteSolidColor(
+                self.tile_size // 2, 
+                self.tile_size // 2, 
+                color
+            )
+        
+        if sprite is None:
+            return False
+        
+        sprite.center_x = tile_x * self.tile_size + self.tile_size // 2
+        sprite.center_y = tile_y * self.tile_size + self.tile_size // 2
+        
+        self.placed_items_sprites.append(sprite)
+        self.placed_items.append((tile_x, tile_y, self.item_to_place['name'], sprite))
+        
+        if self.placing_slot_index is not None and 0 <= self.placing_slot_index < len(self.quick_slots):
+            self.quick_slots[self.placing_slot_index] = None
+        
+        self.obstacle_sprites.append(sprite)
+        
+        self.enemy_manager.recalculate_all_paths()
+        
+        self.cancel_item_selection()
+        
+        return True
 
     def on_update(self, delta_time):
-        dx = 0
-        dy = 0
-        if self.move_up:
-            dy += self.player_speed * delta_time
-        if self.move_down:
-            dy -= self.player_speed * delta_time
-        if self.move_left:
-            dx -= self.player_speed * delta_time
-        if self.move_right:
-            dx += self.player_speed * delta_time
+        self.player.update_animation(delta_time)
+        self.player.update_position(delta_time, self.obstacle_sprites)
+        
+        if self.show_placement_hint:
+            self.placement_hint_timer -= delta_time
+            if self.placement_hint_timer <= 0:
+                self.show_placement_hint = False
+        
+        self.enemy_manager.move_enemies(delta_time)
 
-        old_x = self.player_sprite.center_x
-        old_y = self.player_sprite.center_y
-
-        self.player_sprite.center_x += dx
-        self.player_sprite.center_y += dy
-
-        collisions = arcade.check_for_collision_with_list(self.player_sprite, self.obstacle_sprites)
-        if collisions:
-            self.player_sprite.center_x = old_x
-            self.player_sprite.center_y = old_y
-
-        position = (
-            self.player_sprite.center_x,
-            self.player_sprite.center_y
-        )
+        position = self.player.get_position()
         self.world_camera.position = arcade.math.lerp_2d(
             self.world_camera.position,
             position,
@@ -504,61 +728,73 @@ class GameView(arcade.View):
 
         if self.last_click_time > 0:
             self.last_click_time -= delta_time
-
-        self.level.move_enemy(delta_time)
-
-        for e in self.enemy:
-            if e.sprite:
-                e.sprite.center_x = e.x * self.tile_size + self.tile_size // 2
-                e.sprite.center_y = e.y * self.tile_size + self.tile_size // 2
+        
+        self.check_enemy_collision(delta_time)
 
     def on_key_press(self, key, modifiers):
         if key == arcade.key.ESCAPE:
-            if self.show_inventory:
+            if self.item_to_place:
+                self.cancel_item_selection()
+            elif self.show_inventory:
                 self.show_inventory = False
             else:
                 self.window.show_view(self.main_menu)
         elif key == arcade.key.F11:
             self.window.set_fullscreen(not self.window.fullscreen)
         elif key == arcade.key.I or key == arcade.key.TAB:
+            if self.item_to_place:
+                self.cancel_item_selection()
             self.show_inventory = not self.show_inventory
         elif key == arcade.key.UP or key == arcade.key.W:
-            self.move_up = True
-            print(self.player_sprite.center_y)
+            self.player.move_up = True
         elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.move_down = True
+            self.player.move_down = True
         elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.move_left = True
+            self.player.move_left = True
         elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.move_right = True
+            self.player.move_right = True
         elif key == arcade.key.KEY_1:
-            self.use_quick_slot_item(0)
+            self.select_item_for_placement(0)
         elif key == arcade.key.KEY_2:
-            self.use_quick_slot_item(1)
+            self.select_item_for_placement(1)
         elif key == arcade.key.KEY_3:
-            self.use_quick_slot_item(2)
+            self.select_item_for_placement(2)
         elif key == arcade.key.KEY_4:
-            self.use_quick_slot_item(3)
+            self.select_item_for_placement(3)
         elif key == arcade.key.KEY_5:
-            self.use_quick_slot_item(4)
-
-    def use_quick_slot_item(self, slot_index):
-        if 0 <= slot_index < len(self.quick_slots) and self.quick_slots[slot_index] is not None:
-            item = self.quick_slots[slot_index]
-            print(f"Используется предмет из быстрого слота {slot_index + 1}: {item['name']}")
+            self.select_item_for_placement(4)
 
     def on_key_release(self, key, modifiers):
         if key in (arcade.key.W, arcade.key.UP):
-            self.move_up = False
+            self.player.move_up = False
         elif key in (arcade.key.S, arcade.key.DOWN):
-            self.move_down = False
+            self.player.move_down = False
         elif key in (arcade.key.A, arcade.key.LEFT):
-            self.move_left = False
+            self.player.move_left = False
         elif key in (arcade.key.D, arcade.key.RIGHT):
-            self.move_right = False
+            self.player.move_right = False
 
     def on_mouse_press(self, x, y, button, modifiers):
         import time
+
+        if self.item_to_place and button == arcade.MOUSE_BUTTON_LEFT and not self.show_inventory:
+            try:
+                world_x, world_y = self.world_camera.mouse_to_world(x, y)
+                self.place_item_on_map(world_x, world_y)
+            except Exception as e:
+                camera_x, camera_y = self.world_camera.position
+                screen_width = self.window.width
+                screen_height = self.window.height
+                
+                world_x = (x - screen_width / 2) + camera_x
+                world_y = (y - screen_height / 2) + camera_y
+                
+                self.place_item_on_map(world_x, world_y)
+            return
+        
+        if self.item_to_place and button == arcade.MOUSE_BUTTON_RIGHT:
+            self.cancel_item_selection()
+            return
 
         if self.show_inventory:
             if hasattr(self, 'close_button_area'):
@@ -577,7 +813,13 @@ class GameView(arcade.View):
 
                         if slot_index < len(self.inventory_items):
                             item = self.inventory_items[slot_index]
-                            self.move_item_to_quick_slot(item, slot_index)
+                            moved = self.move_item_to_quick_slot(item, slot_index)
+                            if moved:
+                                self.show_placement_hint = True
+                                self.placement_hint_timer = 3.0
+
+                    else:
+                        pass
 
                     self.last_click_time = current_time
                     self.last_clicked_slot = slot_index
@@ -593,9 +835,11 @@ class GameView(arcade.View):
                     if slot_index == self.quick_slots_count - 1:
                         self.show_inventory = True
                     else:
-                        if self.quick_slots[slot_index] is not None:
-                            item = self.quick_slots[slot_index]
-                            print(f"Клик по быстрому слоту {slot_index + 1}: {item['name']}")
+                        if slot_index < len(self.quick_slots) and self.quick_slots[slot_index] is not None:
+                            self.select_item_for_placement(slot_index)
+                        else:
+                            self.show_placement_hint = True
+                            self.placement_hint_timer = 3.0
                     return
 
         left, right, bottom, top = self.get_shop_button_area()
@@ -605,15 +849,40 @@ class GameView(arcade.View):
             return
 
     def move_item_to_quick_slot(self, item, inventory_slot_index):
-        for i in range(len(self.quick_slots) - 1):
+        for i in range(len(self.quick_slots)):
             if self.quick_slots[i] is None:
                 self.quick_slots[i] = {
                     'name': item['name'],
                     'production': item['production'],
                     'price': item['price']
                 }
-                print(f"Предмет '{item['name']}' перемещен в быстрый слот {i + 1}")
-                return True
-
-        print("Нет свободных быстрых слотов!")
+                if 0 <= inventory_slot_index < len(self.inventory_items):
+                    self.inventory_items.pop(inventory_slot_index)
+                    return True
         return False
+    
+    def check_enemy_collision(self, delta_time):
+        collision_detected = False
+        
+        for enemy_obj in self.enemy_manager.get_enemies():
+            if enemy_obj.sprite and arcade.check_for_collision(self.player.sprite, enemy_obj.sprite):
+                collision_detected = True
+                break
+        
+        if collision_detected:
+            if not self.is_colliding_with_enemy:
+                self.is_colliding_with_enemy = True
+                self.enemy_collision_timer = 0
+            else:
+                self.enemy_collision_timer += delta_time
+                
+                if self.enemy_collision_timer >= self.collision_threshold:
+                    self.game_over()
+        else:
+            self.is_colliding_with_enemy = False
+            self.enemy_collision_timer = 0
+    
+    def game_over(self):
+        from game_over_view import GameOverView
+        game_over_view = GameOverView(self.main_menu)
+        self.window.show_view(game_over_view)
