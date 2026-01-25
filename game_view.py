@@ -1,12 +1,13 @@
 import arcade
+from arcade import PhysicsEngineSimple
 from shop_view import ShopView
 import generate_level
 from arcade.camera import Camera2D
-import enemy
 import os
 import time
 from enemy_manager import EnemyManager
 from player import Player
+from game_over_view import GameOver
 
 class GameView(arcade.View):
     def __init__(self, main_menu_view):
@@ -21,16 +22,22 @@ class GameView(arcade.View):
         
         self.custom_font = self.load_custom_font()
         
-        self.enemy_manager = EnemyManager(self)
-        self.enemy_manager.create_enemies()
+        self.physics_engine = None
         
         self.tile_sprites = arcade.SpriteList()
         self.fortress_sprites = arcade.SpriteList()
         self.obstacle_sprites = arcade.SpriteList()
         
+        self.enemy_sprites = arcade.SpriteList()
+        
         self.placed_items = []
         self.placed_items_sprites = arcade.SpriteList()
-
+        
+        self.emitters = []
+        self.simple_particles = []
+        
+        self.enemy_manager = EnemyManager(self)
+        
         self.world_camera = Camera2D()
         self.ui_camera = Camera2D()
         
@@ -85,10 +92,14 @@ class GameView(arcade.View):
         self.player_position_x = 0
         self.player_position_y = 0
 
-        self.tile_sprites = arcade.SpriteList()
-
         self.generate_sprites()
         self.create_fortress()
+        
+        self.create_static_obstacles()
+        
+        self.enemy_manager.create_enemies()
+        
+        self.enemy_sprites = self.enemy_manager.get_enemy_sprites()
 
         self.last_click_time = 0
         self.double_click_delay = 0.3
@@ -98,16 +109,16 @@ class GameView(arcade.View):
         
         self.add_test_items_to_inventory()
         
-        self.add_static_obstacles()
-        
         self.enemy_collision_timer = 0
         self.collision_threshold = 5.0
         self.is_colliding_with_enemy = False
+        
+        self.init_physics_engine()
+        
+        self.physics_time_accumulator = 0
+        
+        self.debug_enemy_attacks = {}
 
-    def add_static_obstacles(self):
-        for item_sprite in self.placed_items_sprites:
-            self.obstacle_sprites.append(item_sprite)
-    
     def load_custom_font(self):
         possible_font_paths = [
             "media/Nineteen Ninety Three.ttf",
@@ -126,6 +137,45 @@ class GameView(arcade.View):
             pass
         
         return "Arial"
+
+    def init_physics_engine(self):
+        """Инициализация физического движка Arcade"""
+        # Создаем физический движок для игрока
+        # Игрок должен сталкиваться с препятствиями и врагами
+        all_collision_sprites = arcade.SpriteList()
+        all_collision_sprites.extend(self.obstacle_sprites)
+        all_collision_sprites.extend(self.enemy_sprites)
+        
+        self.physics_engine = PhysicsEngineSimple(
+            self.player.sprite, 
+            all_collision_sprites
+        )
+        
+        # Создаем физические движки для врагов
+        # Враги должны сталкиваться с препятствиями, другими врагами и игроком
+        for enemy in self.enemy_manager.get_enemies():
+            enemy_collision_sprites = arcade.SpriteList()
+            enemy_collision_sprites.extend(self.obstacle_sprites)
+            enemy_collision_sprites.extend(self.enemy_sprites)
+            
+            # Удаляем самого врага из списка столкновений
+            if enemy.sprite in enemy_collision_sprites:
+                enemy_collision_sprites.remove(enemy.sprite)
+            
+            # Добавляем игрока
+            enemy_collision_sprites.append(self.player.sprite)
+            
+            enemy.init_physics_engine(enemy_collision_sprites)
+
+    def create_static_obstacles(self):
+        """Создание статических препятствий"""
+        # Очищаем список препятствий
+        self.obstacle_sprites.clear()
+        
+        # Добавляем крепость в препятствия (только если она еще не добавлена)
+        for sprite in self.fortress_sprites:
+            if sprite not in self.obstacle_sprites:
+                self.obstacle_sprites.append(sprite)
 
     def add_test_items_to_inventory(self):
         test_items = [
@@ -197,7 +247,6 @@ class GameView(arcade.View):
                 fortress_sprite.center_y = tile_center_y
 
                 self.fortress_sprites.append(fortress_sprite)
-                self.obstacle_sprites.append(fortress_sprite)
             else:
                 fortress_x = self.map_width - 1
                 fortress_y = 0
@@ -211,7 +260,6 @@ class GameView(arcade.View):
                 fortress_sprite.center_x = tile_center_x
                 fortress_sprite.center_y = tile_center_y
                 self.fortress_sprites.append(fortress_sprite)
-                self.obstacle_sprites.append(fortress_sprite)
 
     def on_show_view(self):
         arcade.set_background_color(arcade.color.DARK_GREEN)
@@ -500,9 +548,53 @@ class GameView(arcade.View):
         
         self.placed_items_sprites.draw()
         
+        # Рисуем простые частицы
+        for particle in self.simple_particles:
+            if particle['timer'] < particle['lifetime']:
+                alpha = int(255 * (1 - particle['timer'] / particle['lifetime']))
+                arcade.draw_circle_filled(
+                    particle['x'], particle['y'],
+                    particle['size'],
+                    (particle['color'][0], particle['color'][1], particle['color'][2], alpha)
+                )
+        
         self.enemy_manager.draw()
         
         self.player.draw()
+        
+        # Отрисовка индикаторов атаки врагов
+        for enemy in self.enemy_manager.get_enemies():
+            if enemy.current_target_item:
+                attack_progress = min(enemy.attack_timer / enemy.attack_threshold, 1.0)
+                
+                # Рисуем индикатор над врагом
+                bar_width = 40
+                bar_height = 5
+                bar_x = enemy.sprite.center_x - bar_width // 2
+                bar_y = enemy.sprite.center_y + 30
+                
+                arcade.draw_lrbt_rectangle_filled(
+                    bar_x, bar_x + bar_width,
+                    bar_y, bar_y + bar_height,
+                    arcade.color.DARK_RED
+                )
+                
+                fill_width = bar_width * attack_progress
+                arcade.draw_lrbt_rectangle_filled(
+                    bar_x, bar_x + fill_width,
+                    bar_y, bar_y + bar_height,
+                    arcade.color.RED
+                )
+                
+                # Текст с обратным отсчетом
+                remaining_time = enemy.attack_threshold - enemy.attack_timer
+                if remaining_time > 0:
+                    arcade.draw_text(
+                        f"{remaining_time:.1f}",
+                        enemy.sprite.center_x, bar_y + 10,
+                        arcade.color.WHITE, font_size=8,
+                        anchor_x="center", anchor_y="center"
+                    )
 
         self.ui_camera.use()
 
@@ -644,26 +736,24 @@ class GameView(arcade.View):
         if not (0 <= tile_x < self.map_width and 0 <= tile_y < self.map_height):
             return False
         
-        for enemy_obj in self.enemy_manager.get_enemies():
-            enemy_tile_x = int(enemy_obj.x)
-            enemy_tile_y = int(enemy_obj.y)
+        # Проверяем, нет ли здесь врага
+        for enemy in self.enemy_manager.get_enemies():
+            enemy_tile_x = int(enemy.x)
+            enemy_tile_y = int(enemy.y)
             if enemy_tile_x == tile_x and enemy_tile_y == tile_y:
                 return False
         
+        # Проверяем, нет ли здесь другого предмета
         for placed_item in self.placed_items:
             if placed_item[0] == tile_x and placed_item[1] == tile_y:
                 return False
         
         tile_value = self.map_level[tile_x][tile_y]
         
-        if tile_value == 3:
+        if tile_value == 3:  # Крепость
             return False
-        elif tile_value == 2:
+        elif tile_value == 2:  # Пещера
             return False
-        elif tile_value == 0:
-            pass
-        elif tile_value == 1:
-            pass
         
         texture = self.item_textures.get(self.item_to_place['name'])
         sprite = None
@@ -687,6 +777,7 @@ class GameView(arcade.View):
                 self.tile_size // 2, 
                 color
             )
+            sprite.color = color
         
         if sprite is None:
             return False
@@ -697,28 +788,215 @@ class GameView(arcade.View):
         self.placed_items_sprites.append(sprite)
         self.placed_items.append((tile_x, tile_y, self.item_to_place['name'], sprite))
         
+        # Добавляем предмет в препятствия (только если его там еще нет)
+        if sprite not in self.obstacle_sprites:
+            self.obstacle_sprites.append(sprite)
+        
+        # Переинициализируем физические движки для всех врагов
+        for enemy in self.enemy_manager.get_enemies():
+            enemy_collision_sprites = arcade.SpriteList()
+            enemy_collision_sprites.extend(self.obstacle_sprites)
+            enemy_collision_sprites.extend(self.enemy_sprites)
+            
+            # Удаляем самого врага из списка столкновений
+            if enemy.sprite in enemy_collision_sprites:
+                enemy_collision_sprites.remove(enemy.sprite)
+            
+            # Добавляем игрока
+            enemy_collision_sprites.append(self.player.sprite)
+            
+            enemy.init_physics_engine(enemy_collision_sprites)
+        
+        # Переинициализируем физический движок для игрока
+        all_collision_sprites = arcade.SpriteList()
+        all_collision_sprites.extend(self.obstacle_sprites)
+        all_collision_sprites.extend(self.enemy_sprites)
+        
+        if self.physics_engine:
+            self.physics_engine = PhysicsEngineSimple(
+                self.player.sprite,
+                all_collision_sprites
+            )
+        
         if self.placing_slot_index is not None and 0 <= self.placing_slot_index < len(self.quick_slots):
             self.quick_slots[self.placing_slot_index] = None
         
-        self.obstacle_sprites.append(sprite)
-        
-        self.enemy_manager.recalculate_all_paths()
+        # Создаем эффект размещения
+        self.create_item_placement_effect(sprite.center_x, sprite.center_y, 
+                                         sprite.color if hasattr(sprite, 'color') else arcade.color.GREEN)
         
         self.cancel_item_selection()
         
         return True
 
-    def on_update(self, delta_time):
-        self.player.update_animation(delta_time)
-        self.player.update_position(delta_time, self.obstacle_sprites)
+    def create_item_placement_effect(self, x, y, color):
+        """Эффект при установке предмета (простая версия для 3.3.3)"""
+        import random
+        import math
         
+        # Создаем простые частицы вместо эмиттеров
+        for _ in range(15):
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(20, 60)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            
+            self.simple_particles.append({
+                'x': x,
+                'y': y,
+                'dx': dx,
+                'dy': dy,
+                'size': random.randint(3, 8),
+                'color': color,
+                'lifetime': random.uniform(0.5, 1.0),
+                'timer': 0.0
+            })
+
+    def create_explosion_effect(self, x, y, color):
+        """Создание эффекта взрыва при уничтожении предмета"""
+        import random
+        import math
+        
+        # Основной взрыв (большие частицы)
+        for _ in range(25):
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(80, 180)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            
+            self.simple_particles.append({
+                'x': x,
+                'y': y,
+                'dx': dx,
+                'dy': dy,
+                'size': random.randint(5, 12),
+                'color': color,
+                'lifetime': random.uniform(0.8, 1.2),
+                'timer': 0.0,
+                'gravity': 120  # Гравитация
+            })
+        
+        
+        for _ in range(15):
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(100, 220)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            
+            self.simple_particles.append({
+                'x': x,
+                'y': y,
+                'dx': dx,
+                'dy': dy,
+                'size': random.randint(2, 6),
+                'color': arcade.color.YELLOW,
+                'lifetime': random.uniform(0.5, 0.7),
+                'timer': 0.0,
+                'gravity': 180  
+            })
+        
+        for _ in range(8):
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(10, 50)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed + 40 
+            
+            self.simple_particles.append({
+                'x': x,
+                'y': y,
+                'dx': dx,
+                'dy': dy,
+                'size': random.randint(8, 15),
+                'color': arcade.color.DARK_GRAY,
+                'lifetime': random.uniform(1.0, 1.5),
+                'timer': 0.0,
+                'fade': True  # Постепенно исчезают
+            })
+
+    def destroy_item_with_explosion(self, item_sprite):
+        """Уничтожение предмета с эффектом взрыва"""
+        # Получаем цвет предмета для эффекта
+        item_color = item_sprite.color if hasattr(item_sprite, 'color') else arcade.color.ORANGE
+        
+        # Создаем эффект взрыва
+        self.create_explosion_effect(
+            item_sprite.center_x,
+            item_sprite.center_y,
+            item_color
+        )
+        
+        # Удаляем спрайт из всех списков
+        item_sprite.remove_from_sprite_lists()
+        
+        # Удаляем из списка размещенных предметов
+        for i, (x, y, name, sprite) in enumerate(self.placed_items):
+            if sprite == item_sprite:
+                self.placed_items.pop(i)
+                break
+        
+        # Удаляем из препятствий (только если он там есть)
+        if item_sprite in self.obstacle_sprites:
+            self.obstacle_sprites.remove(item_sprite)
+        
+        # Переинициализируем физические движки для всех врагов
+        for enemy in self.enemy_manager.get_enemies():
+            enemy_collision_sprites = arcade.SpriteList()
+            enemy_collision_sprites.extend(self.obstacle_sprites)
+            enemy_collision_sprites.extend(self.enemy_sprites)
+            
+            # Удаляем самого врага из списка столкновений
+            if enemy.sprite in enemy_collision_sprites:
+                enemy_collision_sprites.remove(enemy.sprite)
+            
+            # Добавляем игрока
+            enemy_collision_sprites.append(self.player.sprite)
+            
+            enemy.init_physics_engine(enemy_collision_sprites)
+        
+        # Переинициализируем физический движок игрока
+        all_collision_sprites = arcade.SpriteList()
+        all_collision_sprites.extend(self.obstacle_sprites)
+        all_collision_sprites.extend(self.enemy_sprites)
+        
+        if self.physics_engine:
+            self.physics_engine = PhysicsEngineSimple(
+                self.player.sprite,
+                all_collision_sprites
+            )
+        
+        print(f"Предмет уничтожен врагом со взрывом!")
+
+    def on_update(self, delta_time):
+        # Обновляем физику с фиксированным шагом
+        self.physics_time_accumulator += delta_time
+        physics_dt = 1/60.0  # Фиксированный шаг 60 FPS
+        
+        while self.physics_time_accumulator >= physics_dt:
+            if self.physics_engine:
+                self.physics_engine.update()
+            
+            # Обновляем физику врагов
+            for enemy in self.enemy_manager.get_enemies():
+                if hasattr(enemy, 'physics_engine') and enemy.physics_engine:
+                    enemy.physics_engine.update()
+            
+            self.physics_time_accumulator -= physics_dt
+        
+       
+        self.player.update_position(delta_time)
+        self.player.update_animation(delta_time)
+        
+      
+        self.enemy_manager.move_enemies(delta_time)
+        
+        
+        self.check_enemy_item_collisions(delta_time)
+
         if self.show_placement_hint:
             self.placement_hint_timer -= delta_time
             if self.placement_hint_timer <= 0:
                 self.show_placement_hint = False
         
-        self.enemy_manager.move_enemies(delta_time)
-
         position = self.player.get_position()
         self.world_camera.position = arcade.math.lerp_2d(
             self.world_camera.position,
@@ -730,6 +1008,125 @@ class GameView(arcade.View):
             self.last_click_time -= delta_time
         
         self.check_enemy_collision(delta_time)
+        
+    
+        self.update_simple_particles(delta_time)
+        
+        self.prevent_enemy_overlap()
+
+    def update_simple_particles(self, delta_time):
+    
+        for particle in self.simple_particles[:]:
+            particle['timer'] += delta_time
+            
+            
+            if particle['timer'] >= particle['lifetime']:
+                self.simple_particles.remove(particle)
+                continue
+            
+           
+            particle['x'] += particle['dx'] * delta_time
+            particle['y'] += particle['dy'] * delta_time
+            
+           
+            if 'gravity' in particle:
+                particle['dy'] -= particle['gravity'] * delta_time
+            
+           
+            if 'dx' in particle:
+                particle['dx'] *= 0.95
+            if 'dy' in particle:
+                particle['dy'] *= 0.95
+            
+           
+            if 'fade' in particle:
+                particle['size'] *= 0.98
+
+    def prevent_enemy_overlap(self):
+        """Предотвращает наложение врагов друг на друга"""
+        enemies = self.enemy_manager.get_enemies()
+        
+        for i in range(len(enemies)):
+            for j in range(i + 1, len(enemies)):
+                enemy1 = enemies[i]
+                enemy2 = enemies[j]
+                
+                if not enemy1.sprite or not enemy2.sprite:
+                    continue
+                
+              
+                dx = enemy1.sprite.center_x - enemy2.sprite.center_x
+                dy = enemy1.sprite.center_y - enemy2.sprite.center_y
+                distance = (dx**2 + dy**2)**0.5
+                
+              
+                min_distance = 30
+                
+                if distance < min_distance and distance > 0:
+                    
+                    repel_force = (min_distance - distance) / distance * 0.5
+                    
+                    enemy1.sprite.center_x += dx * repel_force
+                    enemy1.sprite.center_y += dy * repel_force
+                    enemy2.sprite.center_x -= dx * repel_force
+                    enemy2.sprite.center_y -= dy * repel_force
+
+    def check_enemy_item_collisions(self, delta_time):
+        """Проверка столкновений врагов с предметами"""
+        for enemy in self.enemy_manager.get_enemies():
+            if enemy.has_reached_fortress:
+                enemy.clear_current_target()
+                continue
+            
+            if enemy.current_target_item:
+                if self.is_enemy_near_item(enemy, enemy.current_target_item):
+                    enemy.update_attack_timer(delta_time)
+                    
+                    if enemy.attack_timer >= enemy.attack_threshold:
+                        self.destroy_item_with_explosion(enemy.current_target_item)
+                        enemy.clear_current_target()
+                else:
+                    enemy.clear_current_target()
+            else:
+                for item_sprite in self.placed_items_sprites:
+                    if self.is_enemy_near_item(enemy, item_sprite):
+                        enemy.set_current_target(item_sprite)
+                        print(f"Враг начал атаковать предмет")
+                        break
+
+    def is_enemy_near_item(self, enemy, item_sprite, distance_threshold=40.0):
+        """Проверка, находится ли враг рядом с предметом"""
+        if not enemy.sprite or not item_sprite:
+            return False
+        
+        dx = enemy.sprite.center_x - item_sprite.center_x
+        dy = enemy.sprite.center_y - item_sprite.center_y
+        distance = (dx**2 + dy**2)**0.5
+        
+        return distance <= distance_threshold
+
+    def check_enemy_collision(self, delta_time):
+        player_x, player_y = self.player.get_position()
+        for enemy in self.enemy_manager.get_enemies():
+            if enemy.sprite:
+                dx = player_x - enemy.sprite.center_x
+                dy = player_y - enemy.sprite.center_y
+                distance = (dx**2 + dy**2)**0.5
+                
+                if distance < 30: 
+                    self.is_colliding_with_enemy = True
+                    self.enemy_collision_timer += delta_time
+                    
+                    if self.enemy_collision_timer >= self.collision_threshold:
+                        self.game_over()
+                    return
+        
+        self.is_colliding_with_enemy = False
+        self.enemy_collision_timer = 0
+
+    def game_over(self):
+        game_over_view = GameOver(self.main_menu)
+        self.window.show_view(game_over_view)
 
     def on_key_press(self, key, modifiers):
         if key == arcade.key.ESCAPE:
@@ -747,12 +1144,16 @@ class GameView(arcade.View):
             self.show_inventory = not self.show_inventory
         elif key == arcade.key.UP or key == arcade.key.W:
             self.player.move_up = True
+            self.player.update_position(0)
         elif key == arcade.key.DOWN or key == arcade.key.S:
             self.player.move_down = True
+            self.player.update_position(0)
         elif key == arcade.key.LEFT or key == arcade.key.A:
             self.player.move_left = True
+            self.player.update_position(0)
         elif key == arcade.key.RIGHT or key == arcade.key.D:
             self.player.move_right = True
+            self.player.update_position(0)
         elif key == arcade.key.KEY_1:
             self.select_item_for_placement(0)
         elif key == arcade.key.KEY_2:
@@ -767,12 +1168,16 @@ class GameView(arcade.View):
     def on_key_release(self, key, modifiers):
         if key in (arcade.key.W, arcade.key.UP):
             self.player.move_up = False
+            self.player.update_position(0)
         elif key in (arcade.key.S, arcade.key.DOWN):
             self.player.move_down = False
+            self.player.update_position(0)
         elif key in (arcade.key.A, arcade.key.LEFT):
             self.player.move_left = False
+            self.player.update_position(0)
         elif key in (arcade.key.D, arcade.key.RIGHT):
             self.player.move_right = False
+            self.player.update_position(0)
 
     def on_mouse_press(self, x, y, button, modifiers):
         import time
@@ -860,29 +1265,3 @@ class GameView(arcade.View):
                     self.inventory_items.pop(inventory_slot_index)
                     return True
         return False
-    
-    def check_enemy_collision(self, delta_time):
-        collision_detected = False
-        
-        for enemy_obj in self.enemy_manager.get_enemies():
-            if enemy_obj.sprite and arcade.check_for_collision(self.player.sprite, enemy_obj.sprite):
-                collision_detected = True
-                break
-        
-        if collision_detected:
-            if not self.is_colliding_with_enemy:
-                self.is_colliding_with_enemy = True
-                self.enemy_collision_timer = 0
-            else:
-                self.enemy_collision_timer += delta_time
-                
-                if self.enemy_collision_timer >= self.collision_threshold:
-                    self.game_over()
-        else:
-            self.is_colliding_with_enemy = False
-            self.enemy_collision_timer = 0
-    
-    def game_over(self):
-        from game_over_view import GameOverView
-        game_over_view = GameOverView(self.main_menu)
-        self.window.show_view(game_over_view)

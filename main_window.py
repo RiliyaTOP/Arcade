@@ -276,3 +276,20 @@ class MainMenuView(arcade.View):
             self.window.set_fullscreen(not self.window.fullscreen)
         elif key == arcade.key.ESCAPE:
             arcade.close_window()
+    class MainMenuView(arcade.View):
+        def __init__(self):
+            super().__init__()
+        # ... существующий код ...
+        
+        # Создаем менеджер музыки
+            from music_manager import create_music_manager
+            self.music_manager = create_music_manager(use_pyglet=True)
+        
+        def on_show_view(self):
+        # ... существующий код ...
+        # Включаем музыку меню
+            self.music_manager.play_music('menu')
+        
+        def on_hide_view(self):
+        # Останавливаем музыку при скрытии
+            self.music_manager.stop_music()

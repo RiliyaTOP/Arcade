@@ -1,7 +1,7 @@
 import arcade
 import os
 
-class GameOverView(arcade.View):
+class GameOver(arcade.View):
     def __init__(self, main_menu_view):
         super().__init__()
         self.main_menu = main_menu_view

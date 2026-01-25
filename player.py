@@ -23,7 +23,7 @@ class Player:
         self.sprite.center_x = map_width * tile_size // 2
         self.sprite.center_y = map_height * tile_size // 2
         
-        self.speed = 300
+        self.speed = 200  
         self.move_up = False
         self.move_down = False
         self.move_left = False
@@ -54,6 +54,7 @@ class Player:
                 self.textures.append(texture)
         except Exception as e:
             try:
+                # Альтернативные текстуры если основные не загрузились
                 colors = [arcade.color.BLUE, arcade.color.LIGHT_BLUE, arcade.color.BLUE]
                 for color in colors:
                     texture = arcade.make_circle_texture(30, color)
@@ -62,6 +63,7 @@ class Player:
                 pass
 
     def update_animation(self, delta_time):
+        """Обновление анимации игрока"""
         self.animation_timer += delta_time
         
         if self.is_moving:
@@ -78,39 +80,40 @@ class Player:
             if self.textures and len(self.textures) > 0:
                 self.sprite.texture = self.textures[0]
 
-    def update_position(self, delta_time, obstacle_sprites):
-        dx = 0
-        dy = 0
-        if self.move_up:
-            dy += self.speed * delta_time
-            self.direction = "up"
-            self.is_moving = True
-        if self.move_down:
-            dy -= self.speed * delta_time
-            self.direction = "down"
-            self.is_moving = True
-        if self.move_left:
-            dx -= self.speed * delta_time
-            self.direction = "left"
-            self.is_moving = True
-        if self.move_right:
-            dx += self.speed * delta_time
-            self.direction = "right"
-            self.is_moving = True
+    def update_position(self, delta_time):
+        speed = self.speed * delta_time
         
-        if not (self.move_up or self.move_down or self.move_left or self.move_right):
-            self.is_moving = False
-
-        old_x = self.sprite.center_x
-        old_y = self.sprite.center_y
-
-        self.sprite.center_x += dx
-        self.sprite.center_y += dy
-
-        collisions = arcade.check_for_collision_with_list(self.sprite, obstacle_sprites)
-        if collisions:
-            self.sprite.center_x = old_x
-            self.sprite.center_y = old_y
+        self.is_moving = (self.move_up or self.move_down or self.move_left or self.move_right)
+        
+        if self.move_up:
+            self.direction = "up"
+        elif self.move_down:
+            self.direction = "down"
+        elif self.move_left:
+            self.direction = "left"
+        elif self.move_right:
+            self.direction = "right"
+        
+        if self.is_moving:
+            if (self.move_up or self.move_down) and (self.move_left or self.move_right):
+                speed = speed * 0.7071  
+            
+            if self.move_up:
+                self.sprite.change_y = speed
+            elif self.move_down:
+                self.sprite.change_y = -speed
+            else:
+                self.sprite.change_y = 0
+                
+            if self.move_left:
+                self.sprite.change_x = -speed
+            elif self.move_right:
+                self.sprite.change_x = speed
+            else:
+                self.sprite.change_x = 0
+        else:
+            self.sprite.change_x = 0
+            self.sprite.change_y = 0
 
     def get_position(self):
         return (self.sprite.center_x, self.sprite.center_y)
@@ -141,3 +144,6 @@ class Player:
                     self.sprite.height,
                     arcade.color.BLUE
                 )
+
+    def get_sprite(self):
+        return self.sprite
