@@ -1,15 +1,12 @@
 import arcade
-from main_window import MainMenuView, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE
+from menu_view import MainMenuView, WIN_W, WIN_H
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 
 def main():
-    window = arcade.Window(
-        SCREEN_WIDTH, 
-        SCREEN_HEIGHT, 
-        SCREEN_TITLE,
-        resizable=True
-    )
-    main_menu = MainMenuView()
-    window.show_view(main_menu)
+    window = arcade.Window(WIN_W, WIN_H, "MegaGameUltra")
+    window.show_view(MainMenuView())
     arcade.run()
 
 if __name__ == "__main__":
