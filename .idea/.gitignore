@@ -1,0 +1,26 @@
+# Default ignored files
+/shelf/
+/workspace.xml
+# IDE и редакторы
+.idea/
+.vscode/
+*.sln
+*.suo
+*.user
+*.userosscache
+
+# Unity
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ibrary/
+*.prefab
+*.unity
+*.asset
+*.mat
+
+# Другие
+*.tiled-session
+.DS_Store
+Thumbs.db

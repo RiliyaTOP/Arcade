@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="61" height="61" tilewidth="32" tileheight="32" infinite="0" nextlayerid="8" nextobjectid="9">
- <tileset firstgid="1" source="../../Pygame/resources/tiles/Tilemap_color1.tsx"/>
- <tileset firstgid="55" source="../../Pygame/resources/tiles/Tilemap_color2.tsx"/>
- <tileset firstgid="109" source="../../Pygame/resources/tiles/Castle.tsx"/>
- <tileset firstgid="189" source="../../Pygame/resources/tiles/Tilemap_color3.tsx"/>
+<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down"
+     width="61" height="61" tilewidth="32" tileheight="32" infinite="0"
+     nextlayerid="8" nextobjectid="9">
+
+<tileset firstgid="1" source="../resources/Tiny Swords (Free Pack)/Terrain/Tileset/Tilemap_color1.tsx"/>
+<tileset firstgid="55" source="../resources/Tiny Swords (Free Pack)/Terrain/Tileset/Tilemap_color2.tsx"/>
+<tileset firstgid="109" source="../resources/Tiny Swords (Free Pack)/Terrain/Tileset/Castle.tsx"/>
+<tileset firstgid="189" source="../resources/Tiny Swords (Free Pack)/Terrain/Tileset/Tilemap_color3.tsx"/>
+
  <tileset firstgid="243" source="Tree1.tsx"/>
  <tileset firstgid="627" source="Tree2.tsx"/>
  <tileset firstgid="1011" source="Gold Stone 6.tsx"/>
+
  <layer id="2" name="ground" width="61" height="61">
   <data encoding="csv">
 11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,

@@ -1,0 +1,113 @@
+{
+    "Map/SizeTest": {
+        "height": 4300,
+        "width": 2
+    },
+    "activeFile": "C:/projects/MegaGameUltra/maps/1map.tmx",
+    "expandedProjectPaths": [
+        "."
+    ],
+    "fileStates": {
+        "Barracks.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "C:/projects/MegaGameUltra/maps/1map.tmx": {
+            "scale": 0.33,
+            "selectedLayer": 5,
+            "viewCenter": {
+                "x": 1233.3333333333333,
+                "y": 1042.4242424242425
+            }
+        },
+        "C:/projects/MegaGameUltra/maps/Gold Stone 6.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "C:/projects/MegaGameUltra/maps/Tree1.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "C:/projects/MegaGameUltra/maps/Tree2.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "Castle.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "NewMap.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "Tilemap_color1.tsx": {
+            "scaleInDock": 0.75,
+            "scaleInEditor": 1
+        },
+        "Tilemap_color2.tsx": {
+            "scaleInDock": 0.75,
+            "scaleInEditor": 1
+        },
+        "Tilemap_color3.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "Tilemap_color4.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "Tower.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "Tree1.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "Water Foam.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "firmap111.tmx": {
+            "scale": 0.5,
+            "selectedLayer": 4,
+            "viewCenter": {
+                "x": 1206,
+                "y": 288
+            }
+        }
+    },
+    "last.imagePath": "C:/projects/MegaGameUltra/resources/Tiny Swords (Free Pack)/Terrain/Resources/Gold/Gold Stones",
+    "map.height": 30,
+    "map.lastUsedFormat": "tmx",
+    "openFiles": [
+        "C:/projects/MegaGameUltra/maps/1map.tmx",
+        "Tilemap_color1.tsx",
+        "Tilemap_color2.tsx",
+        "Tilemap_color3.tsx",
+        "Castle.tsx",
+        "C:/projects/MegaGameUltra/maps/Tree1.tsx",
+        "C:/projects/MegaGameUltra/maps/Tree2.tsx",
+        "C:/projects/MegaGameUltra/maps/Gold Stone 6.tsx"
+    ],
+    "project": "",
+    "recentFiles": [
+        "C:/projects/MegaGameUltra/maps/Gold Stone 6.tsx",
+        "C:/projects/MegaGameUltra/maps/Tree2.tsx",
+        "C:/projects/MegaGameUltra/maps/Tree1.tsx",
+        "Castle.tsx",
+        "Tilemap_color3.tsx",
+        "Tilemap_color2.tsx",
+        "Tilemap_color1.tsx",
+        "C:/projects/MegaGameUltra/maps/1map.tmx",
+        "firmap111.tmx",
+        "Barracks.tsx",
+        "Tower.tsx",
+        "Tree1.tsx"
+    ],
+    "tileset.lastUsedFormat": "tsx",
+    "tileset.tileSize": {
+        "height": 32,
+        "width": 32
+    }
+}
