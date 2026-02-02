@@ -1,11 +1,12 @@
 import math
 import arcade
+import random
+import os
 from arcade.camera import Camera2D
 from controls import MoveController
 from enemy import Enemy
 from menu_view import SETTINGS, SettingsView
 from player import Hero
-
 
 class R:
     def __init__(self, x, y, w, h):
@@ -14,17 +15,15 @@ class R:
         self.width = w
         self.height = h
 
-
 MAP_PATH = "maps/1map.tmx"
 L_WALLS = "walls"
 L_OBJECTS = "objects"
+L_PLACED_ITEMS = "placed_items"
 SCALING = 1.0
-
 
 def props(s):
     p = getattr(s, "properties", None)
     return p if isinstance(p, dict) else {}
-
 
 def scene_list(scene, name):
     try:
@@ -34,7 +33,6 @@ def scene_list(scene, name):
             return scene.get_sprite_list(name)
         except Exception:
             return None
-
 
 def safe_prop_name(s):
     n = getattr(s, "name", "") or ""
@@ -47,15 +45,220 @@ def safe_prop_name(s):
             return str(v).lower()
     return ""
 
+class PhysicsEngine:
+    HERO_RADIUS = 22
+    ENEMY_RADIUS = 18
+    BARRIER_HALF = 20
+    REBOUND_MULT = 1.8
+    DAMPING = 0.92
+    MIN_OVERLAP = 0.5
+
+    @staticmethod
+    def _ensure_phys(enemy):
+        if not hasattr(enemy, '_phys_vx'):
+            enemy._phys_vx = 0.0
+            enemy._phys_vy = 0.0
+
+    @staticmethod
+    def _vec(ax, ay, bx, by):
+        dx, dy = bx - ax, by - ay
+        d = math.hypot(dx, dy)
+        return (dx, dy, d)
+
+    @staticmethod
+    def _circle_vs_aabb(cx, cy, cr, ax, ay, ahw, ahh):
+        px = max(ax - ahw, min(cx, ax + ahw))
+        py = max(ay - ahh, min(cy, ay + ahh))
+        dx, dy = cx - px, cy - py
+        d = math.hypot(dx, dy)
+        if d < cr:
+            if d < 0.001:
+                sides = [
+                    (cx - (ax - ahw), -1,  0),
+                    ((ax + ahw) - cx,  1,  0),
+                    (cy - (ay - ahh),  0, -1),
+                    ((ay + ahh) - cy,  0,  1),
+                ]
+                sides.sort(key=lambda s: s[0])
+                return cr - sides[0][0], sides[0][1], sides[0][2]
+            return cr - d, dx / d, dy / d
+        return None
+
+    def resolve(self, enemies, hero, placed_items, castle_cx, castle_cy, castle_hw, castle_hh):
+        hx, hy = hero.center_x, hero.center_y
+        hr = self.HERO_RADIUS
+        er = self.ENEMY_RADIUS
+        contact = hr + er
+
+        res = self._circle_vs_aabb(hx, hy, hr, castle_cx, castle_cy, castle_hw, castle_hh)
+        if res:
+            pen, nx, ny = res
+            hero.center_x += nx * pen
+            hero.center_y += ny * pen
+
+        for e in enemies:
+            self._ensure_phys(e)
+
+            res = self._circle_vs_aabb(e.center_x, e.center_y, er, castle_cx, castle_cy, castle_hw, castle_hh)
+            if res:
+                pen, nx, ny = res
+                e.center_x += nx * pen
+                e.center_y += ny * pen
+                e._phys_vx += nx * pen * self.REBOUND_MULT
+                e._phys_vy += ny * pen * self.REBOUND_MULT
+
+            dx, dy, d = self._vec(hx, hy, e.center_x, e.center_y)
+            if d < contact and d > 0.001:
+                overlap = contact - d
+                if overlap > self.MIN_OVERLAP:
+                    nx, ny = dx / d, dy / d
+                    e.center_x += nx * overlap
+                    e.center_y += ny * overlap
+                    e._phys_vx += nx * overlap * self.REBOUND_MULT
+                    e._phys_vy += ny * overlap * self.REBOUND_MULT
+
+            for item in placed_items:
+                if not isinstance(item, PlacedItem) or item.destroyed:
+                    continue
+                bh = self.BARRIER_HALF
+                res2 = self._circle_vs_aabb(e.center_x, e.center_y, er, item.center_x, item.center_y, bh, bh)
+                if res2:
+                    pen2, nx2, ny2 = res2
+                    if pen2 > self.MIN_OVERLAP:
+                        e.center_x += nx2 * pen2
+                        e.center_y += ny2 * pen2
+                        e._phys_vx += nx2 * pen2 * self.REBOUND_MULT
+                        e._phys_vy += ny2 * pen2 * self.REBOUND_MULT
+
+        enemy_list = list(enemies)
+        n = len(enemy_list)
+        contact_ee = er * 2
+        for i in range(n):
+            for j in range(i + 1, n):
+                ei, ej = enemy_list[i], enemy_list[j]
+                dx, dy, d = self._vec(ei.center_x, ei.center_y, ej.center_x, ej.center_y)
+                if d < contact_ee and d > 0.001:
+                    overlap = contact_ee - d
+                    if overlap > self.MIN_OVERLAP:
+                        nx, ny = dx / d, dy / d
+                        half = overlap * 0.5
+                        ei.center_x -= nx * half
+                        ei.center_y -= ny * half
+                        ej.center_x += nx * half
+                        ej.center_y += ny * half
+
+        for e in enemies:
+            self._ensure_phys(e)
+            e.center_x += e._phys_vx
+            e.center_y += e._phys_vy
+            e._phys_vx *= self.DAMPING
+            e._phys_vy *= self.DAMPING
+            if abs(e._phys_vx) < 0.05:
+                e._phys_vx = 0.0
+            if abs(e._phys_vy) < 0.05:
+                e._phys_vy = 0.0
+
+class Particle:
+    def __init__(self, x, y, dx, dy, color, size=5, lifetime=1.0):
+        self.x = x
+        self.y = y
+        self.dx = dx
+        self.dy = dy
+        self.color = color
+        self.size = size
+        self.lifetime = lifetime
+        self.max_lifetime = lifetime
+        self.alpha = 255
+        
+    def update(self, dt):
+        self.lifetime -= dt
+        self.x += self.dx * dt * 60
+        self.y += self.dy * dt * 60
+        self.dy -= 0.2
+        self.alpha = int(255 * (self.lifetime / self.max_lifetime))
+        
+    def draw(self):
+        if self.lifetime > 0:
+            arcade.draw_circle_filled(
+                self.x, self.y, self.size,
+                (self.color[0], self.color[1], self.color[2], self.alpha)
+            )
+            
+    def is_alive(self):
+        return self.lifetime > 0
+
+class ParticleSystem:
+    def __init__(self):
+        self.particles = []
+        
+    def create_placement_particles(self, x, y, color=(100, 200, 255)):
+        for _ in range(15):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(50, 150)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            size = random.uniform(3, 7)
+            lifetime = random.uniform(0.5, 1.2)
+            self.particles.append(Particle(x, y, dx, dy, color, size, lifetime))
+            
+    def create_destruction_particles(self, x, y, color=(255, 100, 50)):
+        for _ in range(25):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(80, 200)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            size = random.uniform(4, 8)
+            lifetime = random.uniform(0.7, 1.5)
+            self.particles.append(Particle(x, y, dx, dy, color, size, lifetime))
+            
+    def update(self, dt):
+        alive_particles = []
+        for particle in self.particles:
+            particle.update(dt)
+            if particle.is_alive():
+                alive_particles.append(particle)
+        self.particles = alive_particles
+        
+    def create_death_particles(self, x, y):
+        for _ in range(18):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(70, 180)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            self.particles.append(Particle(x, y, dx, dy, (220, 40, 40), size=random.uniform(3, 7), lifetime=random.uniform(0.4, 1.0)))
+        for _ in range(8):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(40, 100)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            self.particles.append(Particle(x, y, dx, dy, (255, 150, 100), size=random.uniform(2, 4), lifetime=random.uniform(0.3, 0.7)))
+
+    def create_hit_particles(self, x, y):
+        for _ in range(6):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(30, 80)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            self.particles.append(Particle(x, y, dx, dy, (255, 180, 80), size=random.uniform(2, 4), lifetime=random.uniform(0.2, 0.5)))
+
+    def create_coin_particles(self, x, y):
+        for _ in range(10):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(40, 100)
+            dx = math.cos(angle) * speed
+            dy = math.sin(angle) * speed
+            self.particles.append(Particle(x, y, dx, dy, (255, 215, 0), size=random.uniform(2, 5), lifetime=random.uniform(0.3, 0.8)))
+
+    def draw(self):
+        for particle in self.particles:
+            particle.draw()
 
 class ShopView(arcade.View):
     def __init__(self, game_view):
         super().__init__()
         self.gv = game_view
-
         self.panel_w = 920
         self.panel_h = 620
-
         self.cell_w = 240
         self.cell_h = 150
         self.gap = 18
@@ -72,33 +275,26 @@ class ShopView(arcade.View):
     def _cell_rect_3cols_2rows(self, left, top, col, row):
         pad_l = 40
         pad_r = 40
-        head_h = 90
+        head_h = 120
         gap_x = 26
         gap_y = 18
-
         grid_top = top - head_h
-
         w = self.panel_w - pad_l - pad_r
         cell_w = (w - gap_x * 2) / 3
         cell_h = 150
-
         l = left + pad_l + col * (cell_w + gap_x)
         r = l + cell_w
-
         t = grid_top - row * (cell_h + gap_y)
         b = t - cell_h
-
         return l, r, b, t
 
     def _iter_cells(self):
         left, right, bottom, top = self._panel_rect()
-
         cols = [
             self.gv.shop_sections["player"],
             self.gv.shop_sections["inv"],
             self.gv.shop_sections["castle"],
         ]
-
         for col in range(3):
             items = cols[col]
             for row in range(2):
@@ -112,120 +308,59 @@ class ShopView(arcade.View):
 
     def on_draw(self):
         self.clear()
-
         self.gv.draw_world_no_ui()
         self.gv.ui_camera.use()
-
-        arcade.draw_lrbt_rectangle_filled(
-            0, self.window.width, 0, self.window.height,
-            (0, 0, 0, 140)
-        )
-
+        arcade.draw_lrbt_rectangle_filled(0, self.window.width, 0, self.window.height, (0, 0, 0, 140))
         left, right, bottom, top = self._panel_rect()
         arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, (30, 30, 40, 220))
         arcade.draw_lrbt_rectangle_outline(left, right, bottom, top, arcade.color.WHITE, 2)
-
-        arcade.draw_text(
-            "МАГАЗИН",
-            self.window.width / 2,
-            top - 46,
-            arcade.color.WHITE,
-            30,
-            anchor_x="center",
-        )
-
-        arcade.draw_text(
-            f"Золото: {self.gv.coins}",
-            right - 40,
-            top - 52,
-            arcade.color.GOLD,
-            22,
-            anchor_x="right",
-        )
-
+        arcade.draw_text("МАГАЗИН", self.window.width / 2, top - 46, arcade.color.WHITE, 30, anchor_x="center", font_name="Nineteen Ninety Three")
+        arcade.draw_text(f"Золото: {self.gv.coins}", right - 40, top - 52, arcade.color.GOLD, 22, anchor_x="right", font_name="Nineteen Ninety Three")
         left, right, bottom, top = self._panel_rect()
-
         labels = ["ИГРОК", "ИНВЕНТАРЬ", "ЗАМОК"]
-
         for col in range(3):
             l, r, b, t = self._cell_rect_3cols_2rows(left, top, col, 0)
-            arcade.draw_text(
-                labels[col],
-                (l + r) / 2,
-                top - 92,
-                arcade.color.WHITE,
-                18,
-                anchor_x="center",
-            )
-
+            arcade.draw_text(labels[col], (l + r) / 2, top - 108, arcade.color.WHITE, 18, anchor_x="center", font_name="Nineteen Ninety Three")
         for (l, r, b, t), item in self._iter_cells():
             can_buy = self.gv.can_buy(item)
-
             bg = (15, 15, 20, 220) if can_buy else (15, 15, 20, 150)
             bd = (220, 220, 240) if can_buy else (140, 140, 150)
-
             arcade.draw_lrbt_rectangle_filled(l, r, b, t, bg)
             arcade.draw_lrbt_rectangle_outline(l, r, b, t, bd, 2)
-
             title = item.get("title", "")
             if title:
                 arcade.draw_text(title, l + 12, t - 30, arcade.color.WHITE, 16)
-
             if item["kind"] in ("player_upgrade", "castle_upgrade"):
                 icon = self.gv.shop_icons.get(item["id"])
                 if icon is not None:
-                    iw = 64
-                    ih = 64
+                    iw = 70
+                    ih = 70
                     icx = l + 52
                     icy = b + 64
                     arcade.draw_texture_rect(icon, R(icx, icy, iw, ih))
-
                 lvl = self.gv.upg_levels.get(item["id"], 0)
-                arcade.draw_text(
-                    f"x{lvl}",
-                    r - 12,
-                    t - 30,
-                    arcade.color.WHITE,
-                    18,
-                    anchor_x="right",
-                )
-            else:
-                sq = 56
-                icx = (l + r) / 2
-                icy = (b + t) / 2 + 6
-                arcade.draw_lrbt_rectangle_filled(
-                    icx - sq / 2, icx + sq / 2,
-                    icy - sq / 2, icy + sq / 2,
-                    arcade.color.RED
-                )
-
+                arcade.draw_text(f"x{lvl}", r - 12, t - 30, arcade.color.WHITE, 18, anchor_x="right")
+            elif item["kind"] == "inv_item":
+                icon = self.gv.inv_icons.get(item["id"])
+                if icon is not None:
+                    sq = 110
+                    icx = (l + r) / 2
+                    icy = (b + t) / 2 + 6
+                    arcade.draw_texture_rect(icon, R(icx, icy, sq, sq))
+                else:
+                    sq = 70
+                    icx = (l + r) / 2
+                    icy = (b + t) / 2 + 6
+                    arcade.draw_lrbt_rectangle_filled(icx - sq / 2, icx + sq / 2, icy - sq / 2, icy + sq / 2, arcade.color.RED)
             price = item["price"]
             price_color = arcade.color.WHITE if can_buy else arcade.color.LIGHT_GRAY
-
             coin_size = 26
             px = r - 18
             py = b + 18
-
             arcade.draw_texture_rect(self.gv.coin_tex, R(px - 70, py + 10, coin_size, coin_size))
-            arcade.draw_text(
-                str(price),
-                px - 40,
-                py,
-                price_color,
-                18,
-                anchor_x="right",
-            )
-
+            arcade.draw_text(str(price), px - 40, py, price_color, 18, anchor_x="right")
         self.gv.draw_inventory_bar()
-
-        arcade.draw_text(
-            "Клик по лоту — купить. ESC — выйти",
-            self.window.width / 2,
-            bottom - 34,
-            arcade.color.LIGHT_GRAY,
-            18,
-            anchor_x="center",
-        )
+        arcade.draw_text("Клик по лоту — купить. ESC — выйти", self.window.width / 2, bottom - 34, arcade.color.LIGHT_GRAY, 18, anchor_x="center", font_name="Nineteen Ninety Three")
 
     def on_mouse_press(self, x, y, button, modifiers):
         for (l, r, b, t), item in self._iter_cells():
@@ -238,49 +373,104 @@ class ShopView(arcade.View):
             self.window.show_view(self.gv)
             self.gv.on_shop_closed()
 
+class PlacedItem(arcade.Sprite):
+    def __init__(self, item_id, x, y, texture, max_health=20):
+        super().__init__(texture, scale=1.0)
+        self.item_id = item_id
+        self.center_x = x
+        self.center_y = y
+        self.max_health = max_health
+        self.health = max_health
+        self.effect_applied = False
+        self.destroyed = False
+        self.hit_timer = 0.0
+        self.health_colors = [
+            (255, 50, 50),
+            (255, 150, 50),
+            (255, 255, 50),
+            (150, 255, 50),
+            (50, 255, 50),
+        ]
+        self.barrier = arcade.SpriteSolidColor(40, 40, arcade.color.TRANSPARENT_BLACK)
+        self.barrier.center_x = x
+        self.barrier.center_y = y
+        self.barrier.alpha = 0
+
+    def draw(self):
+        if not self.destroyed:
+            super().draw()
+            self.draw_health_bar()
+
+    def draw_health_bar(self):
+        if self.destroyed:
+            return
+        health_percent = self.health / self.max_health
+        color_index = min(4, max(0, int(health_percent * 5)))
+        color = self.health_colors[color_index]
+        bar_width = max(4, int(40 * health_percent))
+        bar_x = self.center_x - bar_width / 2
+        bar_y = self.center_y - 25
+        arcade.draw_lrbt_rectangle_filled(bar_x, bar_x + bar_width, bar_y, bar_y + 4, color)
+
+    def take_damage(self, damage):
+        if self.destroyed:
+            return True
+        self.health -= damage
+        self.hit_timer = 0.3
+        if self.health <= 0:
+            return True
+        return False
+
+    def destroy(self, particle_system=None):
+        self.destroyed = True
+        self.alpha = 0
+        self.barrier.alpha = 0
+        self.barrier.width = 0
+        self.barrier.height = 0
+        if particle_system:
+            particle_system.create_destruction_particles(self.center_x, self.center_y)
+
+    def update(self, dt):
+        if self.hit_timer > 0:
+            self.hit_timer -= dt
+            if self.hit_timer <= 0:
+                self.color = (255, 255, 255)
+            else:
+                self.color = (255, 150, 150) if int(self.hit_timer * 10) % 2 == 0 else (255, 255, 255)
 
 class GameView(arcade.View):
     def __init__(self, menu_view):
         super().__init__()
         self.menu_view = menu_view
-
-        self.tm = arcade.load_tilemap(
-            MAP_PATH,
-            scaling=SCALING,
-            layer_options={L_WALLS: {"use_spatial_hash": True}},
-        )
+        self.tm = arcade.load_tilemap(MAP_PATH, scaling=SCALING, layer_options={L_WALLS: {"use_spatial_hash": True}})
         self.scene = arcade.Scene.from_tilemap(self.tm)
-
+        self.placed_items = scene_list(self.scene, L_PLACED_ITEMS)
+        if self.placed_items is None:
+            self.placed_items = arcade.SpriteList()
+            self.scene.add_sprite_list(L_PLACED_ITEMS, self.placed_items)
         walls = scene_list(self.scene, L_WALLS)
         self.walls = walls if walls is not None else arcade.SpriteList(use_spatial_hash=True)
-
         self.map_w = int(self.tm.width * self.tm.tile_width * SCALING)
         self.map_h = int(self.tm.height * self.tm.tile_height * SCALING)
         self.sad_bgm = arcade.load_sound("resources/music/sad.m4a")
         self.sad_player = None
         self.is_sad_music = False
-
         self.spawn_points = []
         self.player_spawn = (self.map_w / 2, self.map_h / 2)
         self.castle_pos = (self.map_w / 2, self.map_h / 2)
-
         self.castle_hp_max = 100
         self.castle_hp = 100
-
         self.wave_plan = [10, 15, 20]
-
         self.wave = 1
         self.wave_left = self.wave_plan[0]
         self.wave_alive = 0
-
         self.spawn_delay = 1.2
         self.spawn_timer = 0.0
-
         self.kills = 0
         self.level_time = 0.0
         self.game_won = False
-        self.game_over = False  # Новое состояние - игра проиграна
-
+        self.game_over = False
+        self.paused = False
         objs = scene_list(self.scene, L_OBJECTS)
         if objs is not None:
             for s in objs:
@@ -291,46 +481,103 @@ class GameView(arcade.View):
                     self.player_spawn = (s.center_x, s.center_y)
                 if n == "castle":
                     self.castle_pos = (s.center_x, s.center_y)
-
         if not self.spawn_points:
             cx, cy = self.castle_pos
             m = 32
-            self.spawn_points = [
-                (cx, self.map_h - m),
-                (cx, m),
-                (m, cy),
-                (self.map_w - m, cy),
-            ]
-
-        self.castle_radius = 70
+            self.spawn_points = [(cx, self.map_h - m), (cx, m), (m, cy), (self.map_w - m, cy)]
+        self.castle_radius = 110
         self.atk_dmg = 10
         self.atk_radius = 90
         self.atk_cd = 0.35
         self.atk_t = 0.0
-
-        self.castle_target_offset_y = 80
+        self.castle_target_offset_y = 140
         self.castle_target = (self.castle_pos[0], self.castle_pos[1] + self.castle_target_offset_y)
-
+        self.castle_hw = 80
+        self.castle_hh = 80
         px, py = self.player_spawn
         self.player = Hero(px, py, scale=2.0)
-
         self.players = arcade.SpriteList()
         self.players.append(self.player)
-
         self.enemies = arcade.SpriteList()
         self.spawn_i = 0
-
         self.speed = 7
         self.ctrl = MoveController(self.speed)
-
         self.camera = Camera2D()
         self.ui_camera = Camera2D()
-
         self._astar_dummy = arcade.SpriteSolidColor(1, 1, arcade.color.BLACK)
+        grid = int(self.tm.tile_width * SCALING)
+        self._barrier_dirty = True
+        self._update_barriers()
+        self.coins = 0
+        self.coin_tex = arcade.load_texture("resources/Tiny Swords (Free Pack)/Terrain/Resources/Gold/Gold Resource/Gold_Resource.png")
+        self.bgm = arcade.load_sound("resources/music/Garoslaw - Star of Providence Soundtrack vol. 1 - 10 Point Zero.mp3")
+        self.bgm_player = None
+        self.shop_btn_tex = arcade.load_texture("resources/menu/магазин.png")
+        self.shop_active = False
+        self.shop_time_left = 0.0
+        self.shop_return_wave = None
+        self.inventory = [None, None, None]
+        self.upg_levels = {"damage": 0, "speed": 0, "heal": 0, "maxhp": 0}
+        self.selected_item_slot = None
+        self.placing_mode = False
+        self.shop_icons = {
+            "damage": arcade.load_texture("resources/shop/damage.png"),
+            "speed": arcade.load_texture("resources/shop/speedometer.png"),
+            "heal": arcade.load_texture("resources/shop/health-normal.png"),
+            "maxhp": arcade.load_texture("resources/shop/health-increase.png"),
+        }
+        self.inv_icons = {
+            "inv_1": arcade.load_texture("resources/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Stump 1.png"),
+            "inv_2": arcade.load_texture("resources/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Wood Resource/Wood Resource.png"),
+        }
+        self.placed_item_textures = {
+            "inv_1": arcade.load_texture("resources/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Stump 1.png"),
+            "inv_2": arcade.load_texture("resources/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Wood Resource/Wood Resource.png"),
+        }
+        try:
+            self.game_over_bg = arcade.load_texture("resources/menu/свиток1.png")
+        except:
+            self.game_over_bg = None
+        self.item_effects = {
+            "inv_1": {"type": "slow_enemies", "radius": 150, "slow_factor": 0.5, "max_health": 30, "attack_damage": 3},
+            "inv_2": {"type": "damage_area", "radius": 120, "damage": 2, "interval": 1.0, "max_health": 20, "attack_damage": 4},
+        }
+        self.enemy_item_attack_timers = {}
+        self.item_effect_timers = {}
+        self.particle_system = ParticleSystem()
+        self.physics = PhysicsEngine()
+        self.shop_sections = {"player": [], "inv": [], "castle": []}
+        self._make_shop_items()
+        self.record = self.load_record()
+
+    def _make_shop_items(self):
+        self.shop_sections["player"] = [
+            {"kind": "player_upgrade", "id": "damage", "title": "Урон +2", "price": 3},
+            {"kind": "player_upgrade", "id": "speed", "title": "Скорость +1", "price": 3},
+        ]
+        self.shop_sections["inv"] = [
+            {"kind": "inv_item", "id": "inv_1", "title": "Пень (замедление) - 30HP", "price": 4},
+            {"kind": "inv_item", "id": "inv_2", "title": "Колючки (урон) - 20HP", "price": 5},
+        ]
+        self.shop_sections["castle"] = [
+            {"kind": "castle_upgrade", "id": "heal", "title": "Хил +25", "price": 4},
+            {"kind": "castle_upgrade", "id": "maxhp", "title": "MaxHP +25", "price": 6},
+        ]
+
+    def _request_barrier_rebuild(self):
+        self._barrier_dirty = True
+
+    def _update_barriers(self):
+        all_barriers = arcade.SpriteList()
+        for wall in self.walls:
+            all_barriers.append(wall)
+        for item in self.placed_items:
+            if isinstance(item, PlacedItem) and not item.destroyed:
+                all_barriers.append(item.barrier)
         grid = int(self.tm.tile_width * SCALING)
         self.barriers = arcade.AStarBarrierList(
             self._astar_dummy,
-            self.walls,
+            all_barriers,
             grid_size=grid,
             left=0,
             right=self.map_w,
@@ -338,47 +585,18 @@ class GameView(arcade.View):
             top=self.map_h,
         )
 
-        self.coins = 0
-        self.coin_tex = arcade.load_texture(
-            "resources/Tiny Swords (Free Pack)/Terrain/Resources/Gold/Gold Resource/Gold_Resource.png"
-        )
-
-        self.bgm = arcade.load_sound("resources/music/Garoslaw - Star of Providence Soundtrack vol. 1 - 10 Point Zero.mp3")
-        self.bgm_player = None
-
-        self.shop_btn_tex = arcade.load_texture("resources/menu/магазин.png")
-        self.shop_active = False
-        self.shop_time_left = 0.0
-        self.shop_return_wave = None
-
-        self.inventory = [None, None, None]
-        self.upg_levels = {"damage": 0, "speed": 0, "heal": 0, "maxhp": 0}
-
-        self.shop_icons = {
-            "damage": arcade.load_texture("resources/shop/damage.png"),
-            "speed": arcade.load_texture("resources/shop/speedometer.png"),
-            "heal": arcade.load_texture("resources/shop/health-normal.png"),
-            "maxhp": arcade.load_texture("resources/shop/health-increase.png"),
-        }
-
-        self.shop_sections = {"player": [], "inv": [], "castle": []}
-        self._make_shop_items()
-
-    def _make_shop_items(self):
-        self.shop_sections["player"] = [
-            {"kind": "player_upgrade", "id": "damage", "title": "Урон +2", "price": 3},
-            {"kind": "player_upgrade", "id": "speed", "title": "Скорость +1", "price": 3},
-        ]
-
-        self.shop_sections["inv"] = [
-            {"kind": "inv_item", "id": "inv_1", "title": "Предмет", "price": 4},
-            {"kind": "inv_item", "id": "inv_2", "title": "Предмет", "price": 5},
-        ]
-
-        self.shop_sections["castle"] = [
-            {"kind": "castle_upgrade", "id": "heal", "title": "Хил +25", "price": 4},
-            {"kind": "castle_upgrade", "id": "maxhp", "title": "MaxHP +25", "price": 6},
-        ]
+    def spawn_enemy(self):
+        if not self.spawn_points or self.game_over:
+            return
+        x, y = self.spawn_points[self.spawn_i % len(self.spawn_points)]
+        self.spawn_i += 1
+        variant = "warrior" if self.wave % 2 == 0 else "default"
+        e = Enemy(x, y, variant=variant)
+        tx, ty = self.castle_target
+        path = arcade.astar_calculate_path((x, y), (tx, ty), self.barriers, diagonal_movement=False)
+        e.set_path(path)
+        self.enemies.append(e)
+        self.wave_alive += 1
 
     def can_buy(self, item):
         price = item["price"]
@@ -398,7 +616,6 @@ class GameView(arcade.View):
     def on_show_view(self):
         arcade.set_background_color(arcade.color.DARK_SLATE_GRAY)
         self._center_camera()
-
         if self.bgm_player is None:
             self.bgm_player = self.bgm.play(volume=SETTINGS["volume"] / 100, loop=True)
         else:
@@ -418,10 +635,8 @@ class GameView(arcade.View):
     def finish_shop_and_start_next_wave(self):
         self.shop_active = False
         self.shop_time_left = 0.0
-
         self.wave = self.shop_return_wave
         self.shop_return_wave = None
-
         self.wave_left = self.wave_plan[self.wave - 1]
         self.wave_alive = 0
         self.spawn_timer = 0.0
@@ -429,23 +644,18 @@ class GameView(arcade.View):
     def _center_camera(self):
         half_w = self.window.width / 2
         half_h = self.window.height / 2
-
         cx = self.player.center_x
         cy = self.player.center_y
-
         if cx < half_w:
             cx = half_w
         if cy < half_h:
             cy = half_h
-
         max_cx = self.map_w - half_w
         max_cy = self.map_h - half_h
-
         if cx > max_cx:
             cx = max_cx
         if cy > max_cy:
             cy = max_cy
-
         self.camera.position = (cx, cy)
 
     def stop_main_music(self):
@@ -464,45 +674,78 @@ class GameView(arcade.View):
         self.is_sad_music = True
 
     def show_game_over_screen(self):
-        """Показать экран поражения"""
         self.game_over = True
+        self.update_and_save_record()
         self.start_sad_music()
+    
+    def update_and_save_record(self):
+        try:
+            if self.kills > self.record:
+                self.record = self.kills
+            with open("res.txt", "w") as f:
+                f.write(str(self.record))
+        except Exception as e:
+            print(f"Ошибка при сохранении рекорда: {e}")
+    
+    def load_record(self):
+        try:
+            if os.path.exists("res.txt"):
+                with open("res.txt", "r") as f:
+                    content = f.read().strip()
+                    if content:
+                        return int(content)
+            return 0
+        except Exception as e:
+            print(f"Ошибка при загрузке рекорда: {e}")
+            return 0
 
     def draw_world_no_ui(self):
         self.camera.use()
         self.scene.draw()
         self.enemies.draw()
         self.players.draw()
+        self.placed_items.draw()
+        self.particle_system.draw()
+        if self.placing_mode and self.selected_item_slot is not None:
+            mouse_x = self.window.mouse.x if self.window.mouse else 0
+            mouse_y = self.window.mouse.y if self.window.mouse else 0
+            mouse_pos = self.camera.unproject((mouse_x, mouse_y))
+            item_id = self.inventory[self.selected_item_slot]
+            if item_id in self.item_effects:
+                effect = self.item_effects[item_id]
+                arcade.draw_circle_outline(mouse_pos[0], mouse_pos[1], effect["radius"], arcade.color.YELLOW, 2)
 
     def draw_inventory_bar(self):
         y = 70
         slot_w = 110
         slot_h = 90
         gap = 12
-
         total_w = slot_w * 3 + gap * 2
         start_x = self.window.width / 2 - total_w / 2 + slot_w / 2
-
         for i in range(3):
             cx = start_x + i * (slot_w + gap)
             cy = y
-
             l = cx - slot_w / 2
             r = cx + slot_w / 2
             b = cy - slot_h / 2
             t = cy + slot_h / 2
-
-            arcade.draw_lrbt_rectangle_filled(l, r, b, t, (0, 0, 0, 200))
-            arcade.draw_lrbt_rectangle_outline(l, r, b, t, arcade.color.WHITE, 2)
-
+            if i == self.selected_item_slot:
+                arcade.draw_lrbt_rectangle_filled(l, r, b, t, (50, 50, 100, 200))
+                arcade.draw_lrbt_rectangle_outline(l, r, b, t, arcade.color.CYAN, 3)
+            else:
+                arcade.draw_lrbt_rectangle_filled(l, r, b, t, (0, 0, 0, 200))
+                arcade.draw_lrbt_rectangle_outline(l, r, b, t, arcade.color.WHITE, 2)
             if self.inventory[i] is not None:
-                w = 44
-                h = 44
-                arcade.draw_lrbt_rectangle_filled(
-                    cx - w / 2, cx + w / 2,
-                    cy - h / 2, cy + h / 2,
-                    arcade.color.RED
-                )
+                icon = self.inv_icons.get(self.inventory[i])
+                if icon is not None:
+                    w = 60
+                    h = 60
+                    arcade.draw_texture_rect(icon, R(cx, cy, w, h))
+                else:
+                    w = 60
+                    h = 60
+                    arcade.draw_lrbt_rectangle_filled(cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2, arcade.color.RED)
+                arcade.draw_text(str(i+1), cx - slot_w/2 + 10, b + 10, arcade.color.WHITE, 14)
 
     def inv_free_slot(self):
         for i in range(len(self.inventory)):
@@ -515,7 +758,6 @@ class GameView(arcade.View):
             self.atk_dmg += 2
             self.upg_levels["damage"] = self.upg_levels.get("damage", 0) + 1
             return
-
         if item_id == "speed":
             self.speed += 1
             if hasattr(self.ctrl, "speed"):
@@ -524,12 +766,10 @@ class GameView(arcade.View):
                 self.ctrl = MoveController(self.speed)
             self.upg_levels["speed"] = self.upg_levels.get("speed", 0) + 1
             return
-
         if item_id == "heal":
             self.castle_hp = min(self.castle_hp_max, self.castle_hp + 25)
             self.upg_levels["heal"] = self.upg_levels.get("heal", 0) + 1
             return
-
         if item_id == "maxhp":
             self.castle_hp_max += 25
             self.castle_hp += 25
@@ -539,11 +779,9 @@ class GameView(arcade.View):
     def try_buy_item(self, item):
         if not self.can_buy(item):
             return
-
         price = item["price"]
         if self.coins < price:
             return
-
         if item["kind"] == "inv_item":
             slot = self.inv_free_slot()
             if slot is None:
@@ -551,251 +789,286 @@ class GameView(arcade.View):
             self.coins -= price
             self.inventory[slot] = item["id"]
             return
-
         self.coins -= price
         self.apply_upgrade(item["id"])
+
+    def apply_item_effect(self, item_id, item_sprite):
+        if item_sprite.effect_applied or item_sprite.destroyed:
+            return
+        effect = self.item_effects.get(item_id)
+        if not effect:
+            return
+        if effect["type"] == "slow_enemies":
+            for enemy in self.enemies:
+                dist = math.hypot(item_sprite.center_x - enemy.center_x, item_sprite.center_y - enemy.center_y)
+                if dist <= effect["radius"]:
+                    enemy.speed = enemy.speed * effect["slow_factor"]
+        item_sprite.effect_applied = True
+
+    def update_item_effects(self, dt):
+        for item in self.placed_items:
+            if not isinstance(item, PlacedItem) or item.destroyed:
+                continue
+            item.update(dt)
+            effect = self.item_effects.get(item.item_id)
+            if not effect:
+                continue
+            if effect["type"] == "damage_area":
+                timer_key = f"{item.item_id}_{id(item)}"
+                if timer_key not in self.item_effect_timers:
+                    self.item_effect_timers[timer_key] = 0.0
+                self.item_effect_timers[timer_key] += dt
+                if self.item_effect_timers[timer_key] >= effect["interval"]:
+                    self.item_effect_timers[timer_key] = 0.0
+                    for enemy in self.enemies:
+                        dist = math.hypot(item.center_x - enemy.center_x, item.center_y - enemy.center_y)
+                        if dist <= effect["radius"]:
+                            enemy.take_damage(effect["damage"])
+
+    def handle_enemy_item_collisions(self, dt):
+        destroyed_items = []
+        for enemy in self.enemies:
+            item_collided = False
+            for item in self.placed_items:
+                if not isinstance(item, PlacedItem) or item.destroyed:
+                    continue
+                if arcade.check_for_collision(enemy, item.barrier):
+                    item_collided = True
+                    timer_key = f"{id(enemy)}_{id(item)}"
+                    if timer_key not in self.enemy_item_attack_timers:
+                        self.enemy_item_attack_timers[timer_key] = 0.0
+                    self.enemy_item_attack_timers[timer_key] += dt
+                    if self.enemy_item_attack_timers[timer_key] >= 1.0:
+                        self.enemy_item_attack_timers[timer_key] = 0.0
+                        effect = self.item_effects.get(item.item_id)
+                        if effect:
+                            damage = effect.get("attack_damage", 1)
+                            self.particle_system.create_hit_particles(item.center_x, item.center_y)
+                            destroyed = item.take_damage(damage)
+                            if destroyed:
+                                destroyed_items.append((timer_key, item))
+                    enemy.set_mode("attack")
+                    break
+            if not item_collided:
+                enemy.set_mode("walk")
+        for timer_key, item in destroyed_items:
+            if timer_key in self.enemy_item_attack_timers:
+                del self.enemy_item_attack_timers[timer_key]
+            item.destroy(self.particle_system)
+            self._request_barrier_rebuild()
+            item.effect_applied = False
+
+    def place_item(self, x, y):
+        if self.selected_item_slot is None:
+            return False
+        item_id = self.inventory[self.selected_item_slot]
+        if item_id is None:
+            return False
+        test_sprite = arcade.SpriteSolidColor(40, 40, arcade.color.TRANSPARENT_BLACK)
+        test_sprite.center_x = x
+        test_sprite.center_y = y
+        if arcade.check_for_collision_with_list(test_sprite, self.walls):
+            return False
+        for item in self.placed_items:
+            if isinstance(item, PlacedItem) and not item.destroyed:
+                if math.hypot(x - item.center_x, y - item.center_y) < 40:
+                    return False
+        texture = self.placed_item_textures.get(item_id)
+        if not texture:
+            return False
+        effect = self.item_effects.get(item_id, {})
+        max_health = effect.get("max_health", 20)
+        placed_item = PlacedItem(item_id, x, y, texture, max_health)
+        self.placed_items.append(placed_item)
+        self._request_barrier_rebuild()
+        self.particle_system.create_placement_particles(x, y)
+        self.apply_item_effect(item_id, placed_item)
+        self.inventory[self.selected_item_slot] = None
+        self.selected_item_slot = None
+        self.placing_mode = False
+        return True
+
+    def draw_pause_menu(self):
+        arcade.draw_lrbt_rectangle_filled(0, self.window.width, 0, self.window.height, (0, 0, 0, 180))
+        panel_width = 400
+        panel_height = 300
+        panel_x = self.window.width / 2
+        panel_y = self.window.height / 2
+        left = panel_x - panel_width / 2
+        right = panel_x + panel_width / 2
+        bottom = panel_y - panel_height / 2
+        top = panel_y + panel_height / 2
+        arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, (30, 30, 40, 240))
+        arcade.draw_lrbt_rectangle_outline(left, right, bottom, top, arcade.color.WHITE, 3)
+        arcade.draw_text("ПАУЗА", panel_x, top - 40, arcade.color.WHITE, 36, anchor_x="center", anchor_y="center", bold=True, font_name="Nineteen Ninety Three")
+        arcade.draw_text(f"Волна: {self.wave}", panel_x, panel_y + 30, arcade.color.LIGHT_GRAY, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+        arcade.draw_text(f"Врагов осталось: {self.wave_left + self.wave_alive}", panel_x, panel_y - 10, arcade.color.LIGHT_GRAY, 20, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+        arcade.draw_text(f"Здоровье крепости: {self.castle_hp}/{self.castle_hp_max}", panel_x, panel_y - 40, arcade.color.LIGHT_GRAY, 18, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+        arcade.draw_text("P - продолжить", panel_x, panel_y - 90, arcade.color.YELLOW, 20, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+        arcade.draw_text("ESC - настройки", panel_x, panel_y - 120, arcade.color.LIGHT_GRAY, 18, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
 
     def on_draw(self):
         self.clear()
         self.draw_world_no_ui()
-
         self.ui_camera.use()
-
         if not self.game_over:
-            arcade.draw_text(
-                f"wave: {self.wave}   left: {self.wave_left + self.wave_alive}   castle hp: {self.castle_hp}/{self.castle_hp_max}",
-                20,
-                self.window.height - 40,
-                arcade.color.WHITE,
-                16,
-            )
-
+            arcade.draw_text(f"wave: {self.wave}   left: {self.wave_left + self.wave_alive}   castle hp: {self.castle_hp}/{self.castle_hp_max}", 20, self.window.height - 40, arcade.color.WHITE, 16, font_name="Nineteen Ninety Three")
             bx = 20
             by = self.window.height - 70
             w = 220
             h = 16
-
             arcade.draw_lrbt_rectangle_outline(bx, bx + w, by, by + h, arcade.color.WHITE, 2)
             p = max(0.0, min(1.0, self.castle_hp / self.castle_hp_max))
             arcade.draw_lrbt_rectangle_filled(bx, bx + w * p, by, by + h, arcade.color.GREEN)
-
             pad = 20
             size = 90
             right = self.window.width - pad
             top = self.window.height - pad
-
             arcade.draw_texture_rect(self.coin_tex, R(right - size / 2, top - size / 2, size, size))
             arcade.draw_text(str(self.coins), right - size - 14, top - size / 2 - 14, arcade.color.GOLD, 28, bold=True, anchor_x="right")
-
+            arcade.draw_text(f"Рекорд: {self.record}", right - size - 14, top - size / 2 - 50, arcade.color.CYAN, 20, anchor_x="right", font_name="Nineteen Ninety Three")
             self.draw_inventory_bar()
-
+            if self.placing_mode:
+                arcade.draw_text("ЛКМ - поставить предмет | ПКМ или ESC - отмена", self.window.width / 2, 120, arcade.color.YELLOW, 18, anchor_x="center", font_name="Nineteen Ninety Three")
+                if self.selected_item_slot is not None:
+                    item_id = self.inventory[self.selected_item_slot]
+                    if item_id:
+                        item_name = next((item["title"] for item in self.shop_sections["inv"] if item["id"] == item_id), item_id)
+                        arcade.draw_text(f"Выбран: {item_name}", self.window.width / 2, 150, arcade.color.WHITE, 16, anchor_x="center", font_name="Nineteen Ninety Three")
             if self.shop_active:
                 cx = self.window.width / 2
                 cy = self.window.height / 2
-
-                arcade.draw_text(
-                    "ПОРА ЗАКУПАТЬСЯ!",
-                    cx,
-                    cy + 170,
-                    arcade.color.WHITE,
-                    30,
-                    anchor_x="center",
-                )
-
+                arcade.draw_text("ПОРА ЗАКУПАТЬСЯ!", cx, cy + 170, arcade.color.WHITE, 30, anchor_x="center", font_name="Nineteen Ninety Three")
                 t = max(0, int(math.ceil(self.shop_time_left)))
-                arcade.draw_text(
-                    f"Осталось: {t} сек",
-                    cx,
-                    cy + 130,
-                    arcade.color.LIGHT_GRAY,
-                    22,
-                    anchor_x="center",
-                )
-
+                arcade.draw_text(f"Осталось: {t} сек", cx, cy + 130, arcade.color.LIGHT_GRAY, 22, anchor_x="center", font_name="Nineteen Ninety Three")
                 bw = self.shop_btn_tex.width
                 bh = self.shop_btn_tex.height
                 arcade.draw_texture_rect(self.shop_btn_tex, R(cx, cy, bw, bh))
-
+        if self.paused and not self.game_over and not self.game_won and not self.shop_active:
+            self.draw_pause_menu()
         if self.game_won:
-            # Затемнение
-            arcade.draw_lrbt_rectangle_filled(
-                0, self.window.width, 0, self.window.height,
-                (0, 0, 0, 180)
-            )
-            
-            arcade.draw_text(
-                "LEVEL COMPLETE",
-                self.window.width / 2,
-                self.window.height / 2 + 40,
-                arcade.color.GOLD,
-                48,
-                anchor_x="center",
-                anchor_y="center",
-                bold=True
-            )
-            
-            arcade.draw_text(
-                "Вы защитили крепость!",
-                self.window.width / 2,
-                self.window.height / 2 - 20,
-                arcade.color.WHITE,
-                28,
-                anchor_x="center",
-                anchor_y="center",
-            )
-            
-            arcade.draw_text(
-                f"Время: {self.level_time:.1f} сек",
-                self.window.width / 2,
-                self.window.height / 2 - 60,
-                arcade.color.LIGHT_GRAY,
-                22,
-                anchor_x="center",
-                anchor_y="center",
-            )
-            
-            arcade.draw_text(
-                f"Убито врагов: {self.kills}",
-                self.window.width / 2,
-                self.window.height / 2 - 90,
-                arcade.color.LIGHT_GRAY,
-                22,
-                anchor_x="center",
-                anchor_y="center",
-            )
-            
-            arcade.draw_text(
-                "ESC - вернуться в меню",
-                self.window.width / 2,
-                self.window.height / 2 - 140,
-                arcade.color.LIGHT_GRAY,
-                22,
-                anchor_x="center",
-                anchor_y="center",
-            )
-
+            if self.kills > self.record:
+                self.record = self.kills
+                self.update_and_save_record()
+            arcade.draw_lrbt_rectangle_filled(0, self.window.width, 0, self.window.height, (0, 0, 0, 180))
+            arcade.draw_text("LEVEL COMPLETE", self.window.width / 2, self.window.height / 2 + 40, arcade.color.GOLD, 48, anchor_x="center", anchor_y="center", bold=True, font_name="Nineteen Ninety Three")
+            arcade.draw_text("Вы защитили крепость!", self.window.width / 2, self.window.height / 2 - 20, arcade.color.WHITE, 28, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text(f"Время: {self.level_time:.1f} сек", self.window.width / 2, self.window.height / 2 - 60, arcade.color.LIGHT_GRAY, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text(f"Убито врагов: {self.kills}", self.window.width / 2, self.window.height / 2 - 90, arcade.color.LIGHT_GRAY, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text(f"Рекорд: {self.record}", self.window.width / 2, self.window.height / 2 - 120, arcade.color.CYAN, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text("ESC - вернуться в меню", self.window.width / 2, self.window.height / 2 - 160, arcade.color.LIGHT_GRAY, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
         if self.game_over:
-            # Затемнение
-            arcade.draw_lrbt_rectangle_filled(
-                0, self.window.width, 0, self.window.height,
-                (0, 0, 0, 180)
-            )
-            
-            # Текст поражения
-            arcade.draw_text(
-                "GAME OVER",
-                self.window.width / 2,
-                self.window.height / 2 + 40,
-                arcade.color.RED,
-                48,
-                anchor_x="center",
-                anchor_y="center",
-                bold=True
-            )
-            
-            arcade.draw_text(
-                "Крепость пала!",
-                self.window.width / 2,
-                self.window.height / 2 - 20,
-                arcade.color.WHITE,
-                28,
-                anchor_x="center",
-                anchor_y="center",
-            )
-            
-            arcade.draw_text(
-                f"Волна: {self.wave}",
-                self.window.width / 2,
-                self.window.height / 2 - 60,
-                arcade.color.LIGHT_GRAY,
-                22,
-                anchor_x="center",
-                anchor_y="center",
-            )
-            
-            arcade.draw_text(
-                f"Убито врагов: {self.kills}",
-                self.window.width / 2,
-                self.window.height / 2 - 90,
-                arcade.color.LIGHT_GRAY,
-                22,
-                anchor_x="center",
-                anchor_y="center",
-            )
-            
-            arcade.draw_text(
-                "ESC - вернуться в меню",
-                self.window.width / 2,
-                self.window.height / 2 - 140,
-                arcade.color.LIGHT_GRAY,
-                22,
-                anchor_x="center",
-                anchor_y="center",
-            )
+            if self.kills > self.record:
+                self.record = self.kills
+                self.update_and_save_record()
+            if self.game_over_bg is not None:
+                arcade.draw_texture_rect(self.game_over_bg, R(self.window.width / 2, self.window.height / 2, self.window.width, self.window.height))
+                arcade.draw_lrbt_rectangle_filled(0, self.window.width, 0, self.window.height, (0, 0, 0, 140))
+            else:
+                arcade.draw_lrbt_rectangle_filled(0, self.window.width, 0, self.window.height, (0, 0, 0, 180))
+            arcade.draw_text("GAME OVER", self.window.width / 2, self.window.height / 2 + 120, arcade.color.RED, 48, anchor_x="center", anchor_y="center", bold=True, font_name="Nineteen Ninety Three")
+            arcade.draw_text("Крепость пала!", self.window.width / 2, self.window.height / 2 + 70, arcade.color.WHITE, 28, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text(f"Волна: {self.wave}", self.window.width / 2, self.window.height / 2 - 50, arcade.color.LIGHT_GRAY, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text(f"Убито врагов: {self.kills}", self.window.width / 2, self.window.height / 2 - 80, arcade.color.LIGHT_GRAY, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text(f"Рекорд: {self.record}", self.window.width / 2, self.window.height / 2 - 110, arcade.color.CYAN, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
+            arcade.draw_text("ESC - вернуться в меню", self.window.width / 2, self.window.height / 2 - 150, arcade.color.LIGHT_GRAY, 22, anchor_x="center", anchor_y="center", font_name="Nineteen Ninety Three")
 
     def on_mouse_press(self, x, y, button, modifiers):
         if self.game_over or self.game_won:
             return
-            
+        if self.paused:
+            return
         if self.shop_active:
             cx = self.window.width / 2
             cy = self.window.height / 2
             bw = self.shop_btn_tex.width
             bh = self.shop_btn_tex.height
-
             if (cx - bw / 2 <= x <= cx + bw / 2) and (cy - bh / 2 <= y <= cy + bh / 2):
                 self.window.show_view(ShopView(self))
                 return
+        if not self.placing_mode and not self.shop_active:
+            y_slot = 70
+            slot_w = 110
+            slot_h = 90
+            gap = 12
+            total_w = slot_w * 3 + gap * 2
+            start_x = self.window.width / 2 - total_w / 2 + slot_w / 2
+            for i in range(3):
+                cx = start_x + i * (slot_w + gap)
+                cy = y_slot
+                l = cx - slot_w / 2
+                r = cx + slot_w / 2
+                b = cy - slot_h / 2
+                t = cy + slot_h / 2
+                if l <= x <= r and b <= y <= t:
+                    if self.inventory[i] is not None:
+                        self.selected_item_slot = i
+                        self.placing_mode = True
+                    else:
+                        self.selected_item_slot = None
+                        self.placing_mode = False
+                    return
+        if self.placing_mode and button == arcade.MOUSE_BUTTON_LEFT:
+            world_pos = self.camera.unproject((x, y))
+            if (0 <= world_pos[0] <= self.map_w and 0 <= world_pos[1] <= self.map_h):
+                if self.place_item(world_pos[0], world_pos[1]):
+                    print(f"Предмет размещен в ({world_pos[0]:.1f}, {world_pos[1]:.1f})")
+        if self.placing_mode and button == arcade.MOUSE_BUTTON_RIGHT:
+            self.selected_item_slot = None
+            self.placing_mode = False
 
     def on_key_press(self, key, modifiers):
+        if key == arcade.key.P:
+            if not self.game_over and not self.game_won and not self.shop_active:
+                self.paused = not self.paused
+                return
+        if self.paused:
+            if key == arcade.key.P:
+                self.paused = False
+                return
+            elif key == arcade.key.ESCAPE:
+                self.paused = False
+                self.update_and_save_record()
+                self.window.show_view(SettingsView(self.menu_view, self))
+                return
+            return
         if key == arcade.key.ESCAPE:
             if self.game_over or self.game_won:
-                # Если игра окончена или выиграна, возвращаемся в главное меню
+                self.update_and_save_record()
                 self.window.show_view(self.menu_view)
                 return
+            if self.placing_mode:
+                self.selected_item_slot = None
+                self.placing_mode = False
+                return
+            self.update_and_save_record()
             self.window.show_view(SettingsView(self.menu_view, self))
             return
-
         if self.game_won or self.game_over:
             return
-
         if key == arcade.key.SPACE:
             self.player.start_attack()
             self.try_attack()
             return
-
+        if key in (arcade.key.KEY_1, arcade.key.KEY_2, arcade.key.KEY_3):
+            slot_index = key - arcade.key.KEY_1
+            if 0 <= slot_index < len(self.inventory) and self.inventory[slot_index] is not None:
+                self.selected_item_slot = slot_index
+                self.placing_mode = True
+            return
         self.ctrl.on_press(key)
 
     def on_key_release(self, key, modifiers):
-        if self.game_won or self.game_over:
+        if self.game_won or self.game_over or self.paused:
             return
         self.ctrl.on_release(key)
-
-    def spawn_enemy(self):
-        if not self.spawn_points or self.game_over:
-            return
-
-        x, y = self.spawn_points[self.spawn_i % len(self.spawn_points)]
-        self.spawn_i += 1
-
-        e = Enemy(x, y)
-
-        tx, ty = self.castle_target
-        path = arcade.astar_calculate_path((x, y), (tx, ty), self.barriers, diagonal_movement=False)
-        e.set_path(path)
-
-        self.enemies.append(e)
-        self.wave_alive += 1
 
     def try_attack(self):
         if self.atk_t < self.atk_cd:
             return
-
         self.atk_t = 0.0
-
         px = self.player.center_x
         py = self.player.center_y
-
         dead = []
         for e in self.enemies:
             d = math.hypot(px - e.center_x, py - e.center_y)
@@ -804,19 +1077,22 @@ class GameView(arcade.View):
                 if dead_now:
                     dead.append(e)
                     self.coins += 1
+                    self.particle_system.create_death_particles(e.center_x, e.center_y)
+                    self.particle_system.create_coin_particles(e.center_x, e.center_y)
                     self.wave_alive -= 1
-
         for e in dead:
             e.remove_from_sprite_lists()
             self.kills += 1
+            if self.kills > self.record:
+                self.record = self.kills
+                self.update_and_save_record()
 
     def on_update(self, dt):
+        if self.paused:
+            return
         self.apply_volume()
-
-        # Если игра окончена, не обновляем состояние
         if self.game_over or self.game_won:
             return
-
         if self.shop_active:
             self.shop_time_left -= dt
             if self.shop_time_left <= 0:
@@ -824,14 +1100,18 @@ class GameView(arcade.View):
                 self.finish_shop_and_start_next_wave()
             self._center_camera()
             return
-
         if self.castle_hp > 0:
             self.level_time += dt
-
         self.atk_t += dt
+        self.particle_system.update(dt)
+        if self._barrier_dirty:
+            self._update_barriers()
+            self._barrier_dirty = False
+        self.update_item_effects(dt)
+        self.handle_enemy_item_collisions(dt)
         for e in self.enemies:
             e.tick(dt)
-
+        self.physics.resolve(self.enemies, self.player, self.placed_items, self.castle_target[0], self.castle_target[1], self.castle_hw, self.castle_hh)
         if self.castle_hp > 0:
             if self.wave_left > 0:
                 self.spawn_timer += dt
@@ -843,38 +1123,39 @@ class GameView(arcade.View):
                 if self.wave_alive <= 0:
                     if self.wave >= len(self.wave_plan):
                         self.game_won = True
+                        if self.kills > self.record:
+                            self.record = self.kills
+                            self.update_and_save_record()
                     else:
                         self.start_shop_window()
         else:
-            # Крепость умерла - показываем экран поражения
             if not self.game_over:
                 self.show_game_over_screen()
-
         dx, dy = self.ctrl.vector()
         self.player.update_anim(dt, dx, dy, self.speed)
-
         ox, oy = self.player.center_x, self.player.center_y
-
         self.player.center_x = ox + dx
         if arcade.check_for_collision_with_list(self.player, self.walls):
             self.player.center_x = ox
-
         self.player.center_y = oy + dy
         if arcade.check_for_collision_with_list(self.player, self.walls):
             self.player.center_y = oy
         self.player.update_anim(dt, dx, dy, self.speed)
-
         tx, ty = self.castle_target
-
         if self.castle_hp > 0:
             for e in self.enemies:
-                d = math.hypot(tx - e.center_x, ty - e.center_y)
-                if d <= self.castle_radius:
-                    self.castle_hp -= e.attack(dt)
-                else:
-                    e.step(dt, tx, ty)
-
-            if self.castle_hp < 0:
-                self.castle_hp = 0
-
+                is_attacking_item = False
+                for item in self.placed_items:
+                    if isinstance(item, PlacedItem) and not item.destroyed:
+                        if arcade.check_for_collision(e, item.barrier):
+                            is_attacking_item = True
+                            break
+                if not is_attacking_item:
+                    d = math.hypot(tx - e.center_x, ty - e.center_y)
+                    if d <= self.castle_radius:
+                        self.castle_hp -= e.attack(dt)
+                    else:
+                        e.step(dt, tx, ty)
+        if self.castle_hp < 0:
+            self.castle_hp = 0
         self._center_camera()

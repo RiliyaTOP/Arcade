@@ -4,12 +4,22 @@ import os
 import arcade
 from PIL import Image
 
-WALK_PATH = "resources/enemies/1/D_Walk.png"
-ATK_PATH = "resources/enemies/1/D_Special.png"
+VARIANTS = {
+    "default": {
+        "walk": "resources/enemies/1/D_Walk.png",
+        "atk":  "resources/enemies/1/D_Special.png",
+        "fw": 48,
+        "fh": 48,
+    },
+    "warrior": {
+        "walk": "resources/enemies/Warrior/Warrior_Run.png",
+        "atk":  "resources/enemies/Warrior/Warrior_Attack1.png",
+        "fw": 192,
+        "fh": 192,
+    },
+}
 
-FRAME_W = 48
-FRAME_H = 48
-SCALE = 3
+TARGET_PX = 144
 
 CACHE_DIR = "resources/_cache_enemy"
 
@@ -42,11 +52,14 @@ def load_row_textures(path, fw, fh):
 
 
 class Enemy(arcade.Sprite):
-    def __init__(self, x, y, speed=130):
-        self.walk_textures = load_row_textures(WALK_PATH, FRAME_W, FRAME_H)
-        self.atk_textures = load_row_textures(ATK_PATH, FRAME_W, FRAME_H)
+    def __init__(self, x, y, speed=130, variant="default"):
+        v = VARIANTS.get(variant, VARIANTS["default"])
+        fw, fh = v["fw"], v["fh"]
 
-        super().__init__(self.walk_textures[0], SCALE)
+        self.walk_textures = load_row_textures(v["walk"], fw, fh)
+        self.atk_textures  = load_row_textures(v["atk"],  fw, fh)
+
+        super().__init__(self.walk_textures[0], TARGET_PX / fw)
 
         self.textures = []
         for t in self.walk_textures:

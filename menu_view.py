@@ -117,8 +117,9 @@ class MainMenuView(arcade.View):
     def on_mouse_motion(self, x, y, dx, dy):
         sc, ox, oy = self._fit()
 
-        play_cx, play_cy = self._v(640, 410, sc, ox, oy)
-        set_cx, set_cy = self._v(640, 520, sc, ox, oy)
+      
+        play_cx, play_cy = self._v(640, 260, sc, ox, oy) 
+        set_cx, set_cy = self._v(640, 400, sc, ox, oy)  
 
         play_w = self.play.width * sc
         play_h = self.play.height * sc
@@ -132,9 +133,8 @@ class MainMenuView(arcade.View):
     def on_mouse_press(self, x, y, button, modifiers):
         sc, ox, oy = self._fit()
 
-        play_cx, play_cy = self._v(640, 410, sc, ox, oy)
-        set_cx, set_cy = self._v(640, 520, sc, ox, oy)
-
+        play_cx, play_cy = self._v(640, 260, sc, ox, oy)  
+        set_cx, set_cy = self._v(640, 400, sc, ox, oy) 
         play_w = self.play.width * sc
         play_h = self.play.height * sc
 
@@ -174,11 +174,11 @@ class MainMenuView(arcade.View):
         k_cx, k_cy = self._v(1085, 205, sc, ox, oy)
         arcade.draw_texture_rect(self.knight, R(k_cx, k_cy, self.knight.width * sc, self.knight.height * sc))
 
-        play_cx, play_cy = self._v(640, 410, sc, ox, oy)
+        play_cx, play_cy = self._v(640, 260, sc, ox, oy)  
         k = 1.05 if self.h_play else 1.0
         arcade.draw_texture_rect(self.play, R(play_cx, play_cy, self.play.width * sc * k, self.play.height * sc * k))
 
-        set_cx, set_cy = self._v(640, 520, sc, ox, oy)
+        set_cx, set_cy = self._v(640, 400, sc, ox, oy)  # Было 52
         k2 = 1.05 if self.h_set else 1.0
         arcade.draw_texture_rect(self.settings, R(set_cx, set_cy, self.settings.width * sc * k2, self.settings.height * sc * k2))
 
@@ -189,9 +189,6 @@ class SettingsView(arcade.View):
         self.menu_view = menu_view
         self.back_view = back_view
         self.ui_camera = arcade.Camera2D()
-
-        self.logo = arcade.load_texture(str(LOGO_PATH))
-        self.logo_base_scale = 1.0
 
         self.drag = False
         self.bar_x = 0
@@ -227,27 +224,20 @@ class SettingsView(arcade.View):
 
     def on_show_view(self):
         arcade.set_background_color((20, 20, 30))
-        max_w = DESIGN_W * 0.55
-        self.logo_base_scale = min(1.0, max_w / self.logo.width)
 
     def on_draw(self):
         self.ui_camera.use()
         self.clear()
         sc, ox, oy = self._fit()
 
-        logo_cx, logo_cy = self._v(640, 620, sc, ox, oy)
-        lw = self.logo.width * self.logo_base_scale * sc
-        lh = self.logo.height * self.logo_base_scale * sc
-        arcade.draw_texture_rect(self.logo, R(logo_cx, logo_cy, lw, lh))
-
         arcade.draw_text(
             "НАСТРОЙКИ",
             self.window.width / 2,
-            self.window.height / 2 + 190 * sc,
+            self.window.height / 2 + 220 * sc,
             arcade.color.WHITE,
             int(34 * sc),
             anchor_x="center",
-            font_name="Nineteen Ninety Three.otf"
+            font_name="Nineteen Ninety Three"
         )
 
         self.bar_x, self.bar_y = self._v(640, 360, sc, ox, oy)
@@ -279,15 +269,17 @@ class SettingsView(arcade.View):
             arcade.color.WHITE,
             int(24 * sc),
             anchor_x="center",
+            font_name="Nineteen Ninety Three"
         )
 
         arcade.draw_text(
             "ESC — назад",
             self.window.width / 2,
-            self.window.height / 2 - 190 * sc,
+            self.window.height / 2 - 220 * sc,
             arcade.color.LIGHT_GRAY,
             int(18 * sc),
             anchor_x="center",
+            font_name="Nineteen Ninety Three"
         )
 
     def on_mouse_press(self, x, y, button, modifiers):
