@@ -1,4 +1,5 @@
 import arcade
+import os
 from pathlib import Path
 
 WIN_W = 1280
@@ -12,6 +13,45 @@ MUSIC_PATH = Path("resources") / "music" / "Garoslaw - Star of Providence Soundt
 LOGO_PATH = Path("resources") / "menu" / "Mega-Ultra-Game.png"
 
 SETTINGS = {"volume": 40}
+
+SETTINGS_PATH = "settings.txt"
+
+
+def _clamp_int(v, a, b):
+    try:
+        v = int(v)
+    except Exception:
+        return a
+    if v < a:
+        return a
+    if v > b:
+        return b
+    return v
+
+
+def load_settings():
+    try:
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                line = f.read().strip()
+            if line:
+                SETTINGS["volume"] = _clamp_int(line, 0, 100)
+    except Exception:
+        pass
+
+
+def save_settings():
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            f.write(str(_clamp_int(SETTINGS.get("volume", 40), 0, 100)))
+    except Exception:
+        pass
+
+
+load_settings()
+
+
+load_settings()
 
 
 def tex(name):
@@ -117,9 +157,8 @@ class MainMenuView(arcade.View):
     def on_mouse_motion(self, x, y, dx, dy):
         sc, ox, oy = self._fit()
 
-      
-        play_cx, play_cy = self._v(640, 260, sc, ox, oy) 
-        set_cx, set_cy = self._v(640, 400, sc, ox, oy)  
+        play_cx, play_cy = self._v(640, 410, sc, ox, oy)
+        set_cx, set_cy = self._v(640, 520, sc, ox, oy)
 
         play_w = self.play.width * sc
         play_h = self.play.height * sc
@@ -133,8 +172,9 @@ class MainMenuView(arcade.View):
     def on_mouse_press(self, x, y, button, modifiers):
         sc, ox, oy = self._fit()
 
-        play_cx, play_cy = self._v(640, 260, sc, ox, oy)  
-        set_cx, set_cy = self._v(640, 400, sc, ox, oy) 
+        play_cx, play_cy = self._v(640, 410, sc, ox, oy)
+        set_cx, set_cy = self._v(640, 520, sc, ox, oy)
+
         play_w = self.play.width * sc
         play_h = self.play.height * sc
 
@@ -142,8 +182,14 @@ class MainMenuView(arcade.View):
         set_h = self.settings.height * sc
 
         if self._btn_hit(x, y, play_cx, play_cy, play_w, play_h):
+            import traceback
             from game_view import GameView
-            self.window.show_view(GameView(self))
+            try:
+                gv = GameView(self)
+            except Exception:
+                traceback.print_exc()
+                return
+            self.window.show_view(gv)
             return
 
         if self._btn_hit(x, y, set_cx, set_cy, set_w, set_h):
@@ -174,11 +220,11 @@ class MainMenuView(arcade.View):
         k_cx, k_cy = self._v(1085, 205, sc, ox, oy)
         arcade.draw_texture_rect(self.knight, R(k_cx, k_cy, self.knight.width * sc, self.knight.height * sc))
 
-        play_cx, play_cy = self._v(640, 260, sc, ox, oy)  
+        play_cx, play_cy = self._v(640, 410, sc, ox, oy)
         k = 1.05 if self.h_play else 1.0
         arcade.draw_texture_rect(self.play, R(play_cx, play_cy, self.play.width * sc * k, self.play.height * sc * k))
 
-        set_cx, set_cy = self._v(640, 400, sc, ox, oy)  # Было 52
+        set_cx, set_cy = self._v(640, 520, sc, ox, oy)
         k2 = 1.05 if self.h_set else 1.0
         arcade.draw_texture_rect(self.settings, R(set_cx, set_cy, self.settings.width * sc * k2, self.settings.height * sc * k2))
 
@@ -189,6 +235,9 @@ class SettingsView(arcade.View):
         self.menu_view = menu_view
         self.back_view = back_view
         self.ui_camera = arcade.Camera2D()
+
+        self.logo = arcade.load_texture(str(LOGO_PATH))
+        self.logo_base_scale = 1.0
 
         self.drag = False
         self.bar_x = 0
@@ -215,8 +264,9 @@ class SettingsView(arcade.View):
         left = self.bar_x - self.bar_w / 2
         t = (mx - left) / self.bar_w
         t = self._clamp(t, 0.0, 1.0)
-        vol = int(round(1 + t * 99))
-        SETTINGS["volume"] = self._clamp(vol, 1, 100)
+        vol = int(round(t * 100))
+        SETTINGS["volume"] = self._clamp(vol, 0, 100)
+        save_settings()
 
         bv = self.back_view
         if hasattr(bv, "apply_volume"):
@@ -224,20 +274,26 @@ class SettingsView(arcade.View):
 
     def on_show_view(self):
         arcade.set_background_color((20, 20, 30))
+        max_w = DESIGN_W * 0.55
+        self.logo_base_scale = min(1.0, max_w / self.logo.width)
 
     def on_draw(self):
         self.ui_camera.use()
         self.clear()
         sc, ox, oy = self._fit()
 
+        logo_cx, logo_cy = self._v(640, 620, sc, ox, oy)
+        lw = self.logo.width * self.logo_base_scale * sc
+        lh = self.logo.height * self.logo_base_scale * sc
+        arcade.draw_texture_rect(self.logo, R(logo_cx, logo_cy, lw, lh))
+
         arcade.draw_text(
             "НАСТРОЙКИ",
             self.window.width / 2,
-            self.window.height / 2 + 220 * sc,
+            self.window.height / 2 + 190 * sc,
             arcade.color.WHITE,
             int(34 * sc),
             anchor_x="center",
-            font_name="Nineteen Ninety Three"
         )
 
         self.bar_x, self.bar_y = self._v(640, 360, sc, ox, oy)
@@ -251,7 +307,7 @@ class SettingsView(arcade.View):
         arcade.draw_lrbt_rectangle_outline(left, right, bottom, top, arcade.color.WHITE, 2)
 
         vol = SETTINGS["volume"]
-        t = (vol - 1) / 99
+        t = self._clamp(vol / 100.0, 0.0, 1.0)
         fill_r = left + self.bar_w * t
 
         arcade.draw_lrbt_rectangle_filled(left, fill_r, bottom, top, (200, 170, 80))
@@ -269,17 +325,15 @@ class SettingsView(arcade.View):
             arcade.color.WHITE,
             int(24 * sc),
             anchor_x="center",
-            font_name="Nineteen Ninety Three"
         )
 
         arcade.draw_text(
             "ESC — назад",
             self.window.width / 2,
-            self.window.height / 2 - 220 * sc,
+            self.window.height / 2 - 190 * sc,
             arcade.color.LIGHT_GRAY,
             int(18 * sc),
             anchor_x="center",
-            font_name="Nineteen Ninety Three"
         )
 
     def on_mouse_press(self, x, y, button, modifiers):
