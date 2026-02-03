@@ -3,6 +3,9 @@ import math
 import os
 import arcade
 from PIL import Image
+from pathlib import Path
+import re
+
 
 VARIANTS = {
     "default": {
@@ -12,16 +15,36 @@ VARIANTS = {
         "fh": 48,
     },
     "warrior": {
-        "walk": "resources/enemies/Warrior/Warrior_Run.png",
-        "atk":  "resources/enemies/Warrior/Warrior_Attack1.png",
-        "fw": 192,
-        "fh": 192,
-    },
+    "walk": "resources/enemies/Warrior/Warrior_Run.png",
+    "atk":  "resources/enemies/Warrior/Warrior_Attack1.png",
+    "fw": 192,
+    "fh": 192,
+    "scale_by": "h",
+},
+
+
+
 }
 
 TARGET_PX = 144
 
 CACHE_DIR = "resources/_cache_enemy"
+
+from pathlib import Path
+import re
+
+def load_seq(patterns):
+    base = Path(__file__).resolve().parent
+    for p in patterns:
+        files = list(base.glob(p))
+        if files:
+            def key(f):
+                m = re.search(r"_(\d+)\.png$", f.name)
+                return int(m.group(1)) if m else 0
+            files = sorted(files, key=key)
+            return [arcade.load_texture(str(f)) for f in files]
+    return []
+
 
 
 def sheet_count(path, fw):
@@ -57,23 +80,47 @@ class Enemy(arcade.Sprite):
         fw, fh = v["fw"], v["fh"]
 
         self.walk_textures = load_row_textures(v["walk"], fw, fh)
-        self.atk_textures  = load_row_textures(v["atk"],  fw, fh)
 
-        super().__init__(self.walk_textures[0], TARGET_PX / fw)
+        self.atk_textures_raw = None
+        if variant == "warrior":
+            self.atk_textures_raw = load_seq([
+                "resources/**/Warrior_Attack1_48x48_*.png",
+                "resources/**/Warrior_Attack1_100x100_*.png",
+                "resources/**/Warrior_Attack1_128x128_*.png",
+                "resources/**/Warrior_Attack1_192x192_*.png",
+                "resources/**/Warrior_Attack1_48x192_*.png",
+            ])
 
-        self.textures = []
-        for t in self.walk_textures:
-            self.textures.append(t)
+        if self.atk_textures_raw:
+            self.atk_textures = self.atk_textures_raw
+        else:
+            self.atk_textures = load_row_textures(v["atk"], fw, fh)
+
+        base = fh if v.get("scale_by") == "h" else fw
+        super().__init__(self.walk_textures[0], TARGET_PX / base)
+
+        self.base_scale = abs(self.scale_x)
+        self.walk_scale = abs(self.scale_x)
+
+        self.atk_scale = self.walk_scale
+        if self.atk_textures_raw:
+            tw = self.walk_textures[0].width
+            th = self.walk_textures[0].height
+            aw = self.atk_textures[0].width
+            ah = self.atk_textures[0].height
+            if aw > 0 and ah > 0 and tw > 0 and th > 0:
+                self.atk_scale = self.walk_scale * min(tw / aw, th / ah)
+
+        self.textures = self.walk_textures[:]
         self.set_texture(0)
 
         self.center_x = x
         self.center_y = y
 
         self.speed = speed
-
         self.hp = 20
 
-        self.dmg = 6
+        self.dmg = 2
         self.cd = 0.5
         self.t = 0.0
 
@@ -87,28 +134,39 @@ class Enemy(arcade.Sprite):
 
         self.mode = "walk"
 
+        self.facing = 1
+
     def set_path(self, path):
         self.path = path or []
         self.pi = 0
 
+    def _apply_facing(self):
+        s = self.atk_scale if self.mode == "attack" else self.walk_scale
+        self.scale_x = self.facing * abs(s)
+        self.scale_y = abs(s)
+
     def set_mode(self, mode):
         if self.mode == mode:
             return
+
         self.mode = mode
         self.anim_t = 0.0
         self.anim_i = 0
 
         src = self.walk_textures if mode == "walk" else self.atk_textures
-        self.textures = []
-        for t in src:
-            self.textures.append(t)
+        self.textures = src[:]
         self.set_texture(0)
+
+        self._apply_facing()
 
     def tick(self, dt):
         if self.hurt_t > 0:
             self.hurt_t -= dt
             if self.hurt_t <= 0:
                 self.color = (255, 255, 255)
+
+        if self.mode == "attack":
+            self._animate(dt)
 
     def take_damage(self, dmg):
         self.hp -= dmg
@@ -117,6 +175,8 @@ class Enemy(arcade.Sprite):
         return self.hp <= 0
 
     def _animate(self, dt):
+        if not self.textures:
+            return
         self.anim_t += dt
         if self.anim_t >= 0.11:
             self.anim_t = 0.0
@@ -129,7 +189,6 @@ class Enemy(arcade.Sprite):
         d = math.hypot(dx, dy)
         if d < 1:
             return
-
         self.center_x += (dx / d) * self.speed * dt
         self.center_y += (dy / d) * self.speed * dt
 
@@ -142,16 +201,21 @@ class Enemy(arcade.Sprite):
             self._step_to(dt, px, py)
             if math.hypot(px - self.center_x, py - self.center_y) < 10:
                 self.pi += 1
-            return
+        else:
+            self._step_to(dt, tx, ty)
 
-        self._step_to(dt, tx, ty)
+        dx = tx - self.center_x
+        if abs(dx) > 2:
+            self.facing = -1 if dx < 0 else 1
+            self._apply_facing()
 
     def attack(self, dt):
         self.set_mode("attack")
-        self._animate(dt)
 
         self.t += dt
         if self.t >= self.cd:
             self.t = 0.0
             return self.dmg
         return 0
+
+

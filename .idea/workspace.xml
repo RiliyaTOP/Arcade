@@ -37,22 +37,24 @@
     "Python.slice_sprites.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "git-widget-placeholder": "main",
-    "last_opened_file_path": "C:/projects/MegaGameUltra/resources/shop",
+    "last_opened_file_path": "C:/projects/Arcade-main/resources/Tileset2",
     "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
 }]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\projects\Arcade-main\resources\Tileset2" />
+      <recent name="C:\projects\Arcade-main\resources" />
       <recent name="C:\projects\MegaGameUltra\resources\shop" />
       <recent name="C:\projects\MegaGameUltra\resources\menu" />
       <recent name="C:\projects\MegaGameUltra\resources\enemies" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\projects\Arcade-main\resources\Tileset2" />
+      <recent name="C:\projects\Arcade-main\maps" />
       <recent name="C:\projects\MegaGameUltra\resources\music" />
       <recent name="C:\projects\MegaGameUltra\resources\menu" />
       <recent name="C:\projects\MegaGameUltra\resources" />
-      <recent name="C:\projects\MegaGameUltra\resources\enemies" />
-      <recent name="C:\projects\MegaGameUltra" />
     </key>
   </component>
   <component name="RunManager">
@@ -65,7 +67,6 @@
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
       <option name="SDK_HOME" value="" />
-      <option name="SDK_NAME" value="Python 3.13" />
       <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
       <option name="IS_MODULE_SDK" value="false" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
@@ -83,7 +84,7 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-python-sdk-d7ad00fb9fc3-c546a90a8094-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-242.23726.102" />
+        <option value="bundled-python-sdk-0e3be3396995-c546a90a8094-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-242.23339.19" />
       </set>
     </attachedChunks>
   </component>
